@@ -1,0 +1,1601 @@
+WEB-PROD-01 — OUTBOUND EMAIL + SERVER MONITORING RUNBOOK
+=============================================================
+Target: Debian 13 (trixie)
+Host:   web-prod-01
+FQDN:   web-prod-01.nathanbrenton.com
+Public IPv4: 45.32.88.137
+
+PURPOSE
+-------
+Clean, known-good walkthrough for the outbound operational-email and
+server-monitoring stack built on web-prod-01.
+
+This intentionally omits troubleshooting/backtracking and records only the
+final architecture, configuration, validations, and the remaining finalization.
+
+ARCHITECTURE
+------------
+Operational mail:
+    local script / Monit
+            |
+            v
+      /usr/sbin/sendmail
+            |
+            v
+         Postfix
+       outbound-only
+            |
+            v
+        OpenDKIM
+            |
+            v
+    recipient's MX directly
+
+Monitoring:
+    Daily summary:
+        server-health-report
+              |
+        systemd oneshot
+              |
+        systemd timer
+        08:00 America/Los_Angeles
+
+    Immediate alerts:
+        Monit
+          |- host CPU / RAM
+          |- root disk / inodes
+          |- nginx
+          |- ssh
+          |- nftables
+          |- fail2ban
+          |- postfix
+          `- opendkim
+              |
+              v
+        server-monitor-alert
+              |
+              v
+            Postfix
+
+DESIGN DECISIONS
+----------------
+1. Postfix is outbound-only. This host is not an inbound mail server.
+2. No Gmail SMTP relay, Gmail App Password, API, or provider-specific relay.
+3. Postfix delivers directly to recipient MX servers over outbound TCP/25.
+4. No inbound SMTP firewall ports are opened.
+5. Recipient selection is centralized in /etc/server-monitor/config.
+6. Changing ADMIN_EMAIL is intended to change the destination globally.
+7. Operational sender domain: ops.nathanbrenton.com.
+8. DKIM signs outbound operational mail.
+9. SPF authorizes only this server IPv4 for ops.nathanbrenton.com.
+10. DMARC begins in monitoring mode (p=none).
+11. systemd schedules daily summaries; Monit handles condition-driven alerts.
+12. Monit is alert-only for production services; no automatic restarts yet.
+13. Monit CLI uses a root-only Unix control socket; TCP/2812 is not exposed.
+14. Monit remains under ProtectSystem=strict. Only Postfix maildrop is added
+    to its write allowlist so EXEC alerts can submit mail locally.
+
+SAFETY CONVENTION
+-----------------
+SAFE TO PASTE: YES
+    Output is suitable to paste back into chat.
+
+REDACT:
+    Privacy-sensitive fields that are not credentials.
+
+DO NOT PASTE:
+    Secret/private material.
+
+
+======================================================================
+1. DNS / HOST IDENTITY
+======================================================================
+
+Final identity:
+
+    web-prod-01.nathanbrenton.com  A    45.32.88.137
+    45.32.88.137                   PTR  web-prod-01.nathanbrenton.com
+
+LOCAL CLIENT
+
+SAFE TO PASTE: YES
+REDACT: public IPv4 if desired.
+
+    dig +short A web-prod-01.nathanbrenton.com
+    dig +short -x 45.32.88.137
+
+Expected:
+
+    45.32.88.137
+    web-prod-01.nathanbrenton.com.
+
+
+======================================================================
+2. OPERATIONAL MAIL DNS
+======================================================================
+
+Mail domain:
+    ops.nathanbrenton.com
+
+Envelope/header sender:
+    alerts@ops.nathanbrenton.com
+
+SPF
+---
+Squarespace TXT:
+
+    Type:  TXT
+    Name:  ops
+    TTL:   1 hr
+    Value: v=spf1 ip4:45.32.88.137 -all
+
+The version tag must be exactly "v=spf1".
+
+LOCAL CLIENT
+
+SAFE TO PASTE: YES
+
+    dig @8.8.8.8 +short TXT ops.nathanbrenton.com
+    dig @1.1.1.1 +short TXT ops.nathanbrenton.com
+
+Expected from both:
+
+    "v=spf1 ip4:45.32.88.137 -all"
+
+
+DKIM
+----
+Domain:
+    ops.nathanbrenton.com
+
+Selector:
+    webprod01-202608
+
+DNS hostname:
+    webprod01-202608._domainkey.ops.nathanbrenton.com
+
+Squarespace:
+    Type: TXT
+    Name: webprod01-202608._domainkey.ops
+    TTL:  1 hr
+    Value: generated DKIM public key beginning:
+           v=DKIM1; h=sha256; k=rsa; p=...
+
+PUBLIC DKIM DNS KEY:
+    Safe to inspect/paste.
+
+PRIVATE DKIM KEY:
+    /etc/opendkim/keys/ops.nathanbrenton.com/webprod01-202608.private
+
+DO NOT PASTE:
+    Any contents from the .private file.
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo /usr/sbin/opendkim-testkey       -d ops.nathanbrenton.com       -s webprod01-202608       -vvv
+
+Known-good result includes:
+
+    key OK
+
+
+DMARC
+-----
+Squarespace TXT:
+
+    Type:  TXT
+    Name:  _dmarc.ops
+    TTL:   1 hr
+    Value: v=DMARC1; p=none
+
+LOCAL CLIENT
+
+SAFE TO PASTE: YES
+
+    dig +short TXT _dmarc.ops.nathanbrenton.com
+
+Expected:
+
+    "v=DMARC1; p=none"
+
+
+======================================================================
+3. CENTRAL SERVER-MONITOR CONFIGURATION
+======================================================================
+
+File:
+    /etc/server-monitor/config
+
+Ownership:
+    root:root
+
+Mode:
+    600
+
+Current logical contents:
+
+    ADMIN_EMAIL="nbrenton@gmail.com"
+    MAIL_FROM="alerts@ops.nathanbrenton.com"
+    MAIL_FROM_NAME="web-prod-01"
+
+    CPU_WARN_PERCENT="85"
+    RAM_WARN_PERCENT="85"
+    DISK_WARN_PERCENT="80"
+    INODE_WARN_PERCENT="80"
+    CERT_WARN_DAYS="21"
+
+Recipient-agnostic rule:
+    To change the destination for all current reports/alerts, change
+    ADMIN_EMAIL only.
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+This validation does not print the actual values.
+
+    sudo bash -c '
+    set -eu
+    . /etc/server-monitor/config
+    for v in       ADMIN_EMAIL MAIL_FROM MAIL_FROM_NAME       CPU_WARN_PERCENT RAM_WARN_PERCENT       DISK_WARN_PERCENT INODE_WARN_PERCENT CERT_WARN_DAYS
+    do
+        eval "value=\${$v:-}"
+        [ -n "$value" ] || {
+            echo "$v=missing"
+            exit 1
+        }
+        echo "$v=set"
+    done
+    '
+
+
+======================================================================
+4. POSTFIX — OUTBOUND-ONLY LOCAL MTA
+======================================================================
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+For a clean rebuild:
+
+    echo 'postfix postfix/main_mailer_type select Internet Site'       | sudo debconf-set-selections
+
+    echo 'postfix postfix/mailname string nathanbrenton.com'       | sudo debconf-set-selections
+
+    sudo apt update
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y postfix
+
+Final settings:
+
+    sudo postconf -e 'myhostname = web-prod-01.nathanbrenton.com'
+    sudo postconf -e 'mydomain = nathanbrenton.com'
+    sudo postconf -e 'myorigin = $mydomain'
+    sudo postconf -e 'mydestination ='
+    sudo postconf -e 'inet_interfaces = loopback-only'
+    sudo postconf -e 'inet_protocols = ipv4'
+    sudo postconf -e 'relayhost ='
+    sudo postconf -e 'smtp_tls_security_level = may'
+
+    sudo postfix check
+    sudo systemctl enable --now postfix
+    sudo systemctl reload postfix
+
+Verify:
+
+    sudo postconf       myhostname       mydomain       myorigin       mydestination       inet_interfaces       inet_protocols       relayhost       smtp_tls_security_level
+
+Listener check:
+
+    sudo ss -lntp | grep -E '(:25[[:space:]]|:25$)' || true
+
+Expected:
+    Postfix may listen on loopback TCP/25.
+    It must not listen on the public interface.
+
+No inbound SMTP firewall rule was added.
+
+Mail queue:
+
+    sudo postqueue -p
+
+Healthy idle state:
+
+    Mail queue is empty
+
+
+======================================================================
+5. OPENDKIM
+======================================================================
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo apt install -y opendkim opendkim-tools
+
+    sudo install -d       -o opendkim       -g opendkim       -m 700       /etc/opendkim/keys/ops.nathanbrenton.com
+
+Generate a new selector only when required:
+
+    cd /etc/opendkim/keys/ops.nathanbrenton.com
+
+    sudo -u opendkim /usr/sbin/opendkim-genkey       -b 2048       -d ops.nathanbrenton.com       -s webprod01-202608
+
+    sudo chown opendkim:opendkim       webprod01-202608.private       webprod01-202608.txt
+
+    sudo chmod 600 webprod01-202608.private
+
+Publish only the public TXT record generated in:
+
+    webprod01-202608.txt
+
+DO NOT PASTE:
+    webprod01-202608.private
+
+
+Final /etc/opendkim.conf:
+
+    Syslog                  yes
+    SyslogSuccess           yes
+
+    Mode                    s
+    Canonicalization        relaxed/simple
+    OversignHeaders         From
+
+    UserID                  opendkim
+    PidFile                 /run/opendkim/opendkim.pid
+
+    Socket                  inet:8891@[127.0.0.1]
+
+    Domain                  ops.nathanbrenton.com
+    Selector                webprod01-202608
+    KeyFile                 /etc/opendkim/keys/ops.nathanbrenton.com/webprod01-202608.private
+
+    TrustAnchorFile         /usr/share/dns/root.key
+
+
+Postfix milter integration:
+
+    sudo postconf -e 'smtpd_milters = inet:127.0.0.1:8891'
+    sudo postconf -e 'non_smtpd_milters = inet:127.0.0.1:8891'
+    sudo postconf -e 'milter_protocol = 6'
+    sudo postconf -e 'milter_default_action = tempfail'
+
+    sudo postfix check
+    sudo systemctl enable --now opendkim
+    sudo systemctl restart opendkim
+    sudo systemctl reload postfix
+
+Verify listener:
+
+    sudo ss -lntp | grep ':8891' || true
+
+Expected:
+    localhost only.
+
+
+======================================================================
+6. CONTROLLED OUTBOUND MAIL TEST
+======================================================================
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES for terminal output.
+REDACT: ADMIN_EMAIL if inspecting headers/logs.
+
+    sudo bash <<'EOF'
+    set -euo pipefail
+
+    . /etc/server-monitor/config
+
+    {
+        printf 'From: %s <%s>\n' "$MAIL_FROM_NAME" "$MAIL_FROM"
+        printf 'To: %s\n' "$ADMIN_EMAIL"
+        printf 'Subject: [web-prod-01] outbound mail subsystem test\n'
+        printf 'Date: %s\n' "$(LC_ALL=C date -R)"
+        printf 'MIME-Version: 1.0\n'
+        printf 'Content-Type: text/plain; charset=UTF-8\n'
+        printf '\n'
+        printf 'Outbound operational mail test.\n'
+    } | /usr/sbin/sendmail -i -f "$MAIL_FROM" "$ADMIN_EMAIL"
+
+    echo "message_submitted=yes"
+    EOF
+
+Then:
+
+    sudo postqueue -p
+
+Recipient-side target:
+
+    SPF:   PASS
+    DKIM:  PASS
+    DMARC: PASS
+
+Validated during setup:
+    - DKIM passed.
+    - DMARC passed.
+    - SPF DNS is now correctly published as v=spf1.
+    - Messages subsequently began reaching Gmail Inbox rather than Spam.
+    - Direct recipient-MX transport negotiated TLS 1.3 during Gmail testing.
+
+If SPF PASS was not explicitly rechecked after propagation, include one final
+header check in the final audit.
+
+
+======================================================================
+7. DAILY HEALTH REPORT
+======================================================================
+
+Executable:
+    /usr/local/sbin/server-health-report
+
+Ownership:
+    root:root
+
+Mode:
+    750
+
+Configuration:
+    /etc/server-monitor/config
+
+The script:
+    - starts with set -euo pipefail
+    - samples CPU from /proc/stat
+    - reports RAM and swap
+    - reports root filesystem usage
+    - reports inode usage
+    - checks core service states
+    - reports failed systemd units
+    - reports pending APT upgrades
+    - reports Fail2ban sshd status
+    - reports Postfix queue
+    - reports Let's Encrypt certificate days remaining
+    - reports current deployment symlinks
+    - reports Hiplingo public-media size if present
+    - reports top CPU processes
+    - reports top memory processes
+    - submits via local Postfix sendmail
+
+Correct inode collection:
+
+    INODE_PERCENT=$(
+        df -Pi / |
+            awk 'NR == 2 { gsub(/%/, "", $5); print $5 }'
+    )
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo bash -n /usr/local/sbin/server-health-report       && echo "script_syntax=valid"
+
+    sudo /usr/local/sbin/server-health-report
+
+Expected:
+
+    health_report_submitted=yes
+    status=OK
+
+or:
+
+    health_report_submitted=yes
+    status=WARNING
+
+
+======================================================================
+8. DAILY SYSTEMD SERVICE + TIMER
+======================================================================
+
+/etc/systemd/system/server-health-report.service:
+
+    [Unit]
+    Description=Send daily web-prod-01 server health report
+    Documentation=file:/usr/local/sbin/server-health-report
+    After=network-online.target postfix.service opendkim.service
+    Wants=network-online.target
+
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/sbin/server-health-report
+    User=root
+    Group=root
+
+
+/etc/systemd/system/server-health-report.timer:
+
+    [Unit]
+    Description=Run daily web-prod-01 server health report
+
+    [Timer]
+    OnCalendar=*-*-* 08:00:00 America/Los_Angeles
+    Persistent=true
+    Unit=server-health-report.service
+
+    [Install]
+    WantedBy=timers.target
+
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo systemd-analyze verify       /etc/systemd/system/server-health-report.service       /etc/systemd/system/server-health-report.timer
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now server-health-report.timer
+
+    printf 'enabled='
+    systemctl is-enabled server-health-report.timer
+
+    printf 'active='
+    systemctl is-active server-health-report.timer
+
+    systemctl list-timers server-health-report.timer --all --no-pager
+
+Known-good:
+    enabled=enabled
+    active=active
+
+Schedule:
+    08:00 America/Los_Angeles daily.
+    During PDT this appears as 15:00 UTC.
+
+Manual systemd test:
+
+    sudo systemctl start server-health-report.service
+
+    systemctl show server-health-report.service       -p Result       -p ExecMainStatus       -p ActiveState
+
+Successful oneshot:
+
+    Result=success
+    ExecMainStatus=0
+    ActiveState=inactive
+
+"Inactive" is normal after a successful oneshot exits.
+
+
+======================================================================
+9. MONIT INSTALLATION
+======================================================================
+
+Package:
+    Monit 5.34.3 on Debian 13
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo apt update
+    sudo apt install -y monit
+
+    monit -V | head -n 5
+    systemctl is-enabled monit
+    systemctl is-active monit
+    sudo monit -t
+
+Known-good:
+    enabled
+    active
+    Control file syntax OK
+
+Base polling interval:
+    120 seconds
+
+Active base directives:
+
+    set daemon 120
+    set log /var/log/monit.log
+    set idfile /var/lib/monit/id
+    set statefile /var/lib/monit/state
+
+    set eventqueue
+        basedir /var/lib/monit/events
+        slots 100
+
+    include /etc/monit/conf.d/*
+    include /etc/monit/conf-enabled/*
+
+
+======================================================================
+10. LOCAL-ONLY MONIT CONTROL SOCKET
+======================================================================
+
+Purpose:
+    Allow root to use monit status/summary without exposing Monit TCP/2812.
+
+File:
+    /etc/monit/conf.d/local-control
+
+Ownership:
+    root:root
+
+Mode:
+    600
+
+DO NOT PASTE:
+    /etc/monit/conf.d/local-control
+    It contains a generated local Monit CLI password.
+
+Logical content:
+
+    set httpd unixsocket /run/monit.sock
+        permission 0600
+        allow monitcli:<RANDOM-SECRET>
+
+Creation pattern:
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+The generated password is deliberately not printed.
+
+    sudo bash <<'EOF'
+    set -euo pipefail
+
+    PASSWORD="$(openssl rand -hex 24)"
+
+    cat > /etc/monit/conf.d/local-control <<MONIT
+    set httpd unixsocket /run/monit.sock
+        permission 0600
+        allow monitcli:${PASSWORD}
+    MONIT
+
+    chown root:root /etc/monit/conf.d/local-control
+    chmod 600 /etc/monit/conf.d/local-control
+    EOF
+
+    sudo monit -t
+    sudo systemctl restart monit
+
+Verify no TCP/2812:
+
+    if sudo ss -lntp | grep -q ':2812'; then
+        echo "monit_tcp_2812=UNEXPECTED_LISTENER"
+    else
+        echo "monit_tcp_2812=not-listening"
+    fi
+
+Expected:
+
+    monit_tcp_2812=not-listening
+
+Verify socket:
+
+    sudo ss -lxnp | grep -F '/run/monit.sock' || true
+
+Then:
+
+    sudo monit summary
+
+
+======================================================================
+11. GENERIC MONIT -> POSTFIX ALERT BRIDGE
+======================================================================
+
+Executable:
+    /usr/local/sbin/server-monitor-alert
+
+Ownership:
+    root:root
+
+Mode:
+    750
+
+It receives MONIT_* environment variables and sends through local Postfix.
+Sender/recipient values remain centralized in /etc/server-monitor/config.
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo tee /usr/local/sbin/server-monitor-alert >/dev/null <<'EOF'
+    #!/bin/bash
+    #
+    # Generic Monit -> Postfix alert bridge.
+    #
+
+    set -euo pipefail
+
+    CONFIG="/etc/server-monitor/config"
+
+    if [ ! -r "$CONFIG" ]; then
+        echo "ERROR: cannot read $CONFIG" >&2
+        exit 1
+    fi
+
+    . "$CONFIG"
+
+    for variable in ADMIN_EMAIL MAIL_FROM MAIL_FROM_NAME; do
+        eval 'value=${'"$variable"':-}'
+        if [ -z "$value" ]; then
+            echo "ERROR: $variable is not configured" >&2
+            exit 1
+        fi
+    done
+
+    HOST="${MONIT_HOST:-$(hostname)}"
+    SERVICE="${MONIT_SERVICE:-unknown-service}"
+    EVENT="${MONIT_EVENT:-monitor-event}"
+    DESCRIPTION="${MONIT_DESCRIPTION:-No event description supplied}"
+    EVENT_DATE="${MONIT_DATE:-$(LC_ALL=C date -R)}"
+
+    clean_header()
+    {
+        printf '%s' "$1" | tr '\r\n' '  '
+    }
+
+    HOST_HEADER="$(clean_header "$HOST")"
+    SERVICE_HEADER="$(clean_header "$SERVICE")"
+    EVENT_HEADER="$(clean_header "$EVENT")"
+
+    SUBJECT="[$HOST_HEADER] MONIT: $SERVICE_HEADER — $EVENT_HEADER"
+
+    {
+        printf 'From: %s <%s>\n' "$MAIL_FROM_NAME" "$MAIL_FROM"
+        printf 'To: %s\n' "$ADMIN_EMAIL"
+        printf 'Subject: %s\n' "$SUBJECT"
+        printf 'Date: %s\n' "$(LC_ALL=C date -R)"
+        printf 'MIME-Version: 1.0\n'
+        printf 'Content-Type: text/plain; charset=UTF-8\n'
+        printf '\n'
+        printf '%s — Monit Event\n' "$HOST"
+        printf '==============================\n'
+        printf '\n'
+        printf 'Service:     %s\n' "$SERVICE"
+        printf 'Event:       %s\n' "$EVENT"
+        printf 'Event time:  %s\n' "$EVENT_DATE"
+        printf '\n'
+        printf 'Description:\n'
+        printf '%s\n' "$DESCRIPTION"
+        printf '\n'
+        printf 'This message was generated by the server-wide monitoring subsystem.\n'
+    } | /usr/sbin/sendmail -i -f "$MAIL_FROM" "$ADMIN_EMAIL"
+
+    echo "monitor_alert_submitted=yes"
+    EOF
+
+    sudo chown root:root /usr/local/sbin/server-monitor-alert
+    sudo chmod 750 /usr/local/sbin/server-monitor-alert
+
+    sudo bash -n /usr/local/sbin/server-monitor-alert       && echo "alert_script_syntax=valid"
+
+Manual bridge test:
+
+    sudo env       MONIT_HOST="web-prod-01"       MONIT_SERVICE="monitoring-pipeline-test"       MONIT_EVENT="Test alert"       MONIT_DESCRIPTION="Manual validation of the Monit-to-Postfix alert pipeline."       MONIT_DATE="$(LC_ALL=C date -R)"       /usr/local/sbin/server-monitor-alert
+
+Expected:
+
+    monitor_alert_submitted=yes
+
+
+======================================================================
+12. MONIT RESOURCE CHECKS
+======================================================================
+
+File:
+    /etc/monit/conf.d/server-resources
+
+Ownership:
+    root:root
+
+Mode:
+    600
+
+Current thresholds/debounce:
+    CPU:    >85% for 3 cycles
+    RAM:    >85% for 3 cycles
+    Disk:   >80% for 2 cycles
+    Inodes: >80% for 2 cycles
+
+At 120 seconds/cycle:
+    CPU/RAM: roughly 6 minutes sustained
+    Disk/inodes: roughly 4 minutes
+
+Production behavior:
+    Alert on failure transition.
+    Alert on recovery transition.
+    No automatic corrective action.
+
+Recommended final form after Section 19:
+
+    check system web-prod-01
+
+        if cpu usage > 85% for 3 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+        if memory usage > 85% for 3 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+
+    check filesystem root-filesystem with path /
+
+        if space usage > 80% for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+        if inode usage > 80% for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+
+======================================================================
+13. MONIT CRITICAL SYSTEMD SERVICE CHECKS
+======================================================================
+
+File:
+    /etc/monit/conf.d/systemd-services
+
+Services:
+    nginx.service
+    ssh.service
+    nftables.service
+    fail2ban.service
+    postfix.service
+    opendkim.service
+
+Design:
+    systemd remains authoritative.
+    Monit runs systemctl is-active.
+    Monit only alerts.
+    No automatic production restart.
+
+Current production debounce:
+    2 failed Monit cycles.
+
+Important:
+    Monit check-program checks are asynchronous. The command may start on one
+    cycle and its exit status may be collected on the next.
+
+Recommended final form after Section 19:
+
+    check program nginx-systemd
+        with path "/usr/bin/systemctl is-active nginx.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program ssh-systemd
+        with path "/usr/bin/systemctl is-active ssh.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program nftables-systemd
+        with path "/usr/bin/systemctl is-active nftables.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program fail2ban-systemd
+        with path "/usr/bin/systemctl is-active fail2ban.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program postfix-systemd
+        with path "/usr/bin/systemctl is-active postfix.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program opendkim-systemd
+        with path "/usr/bin/systemctl is-active opendkim.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+
+======================================================================
+14. MONIT SYSTEMD SANDBOX EXCEPTION FOR POSTFIX SUBMISSION
+======================================================================
+
+Effective hardening:
+    ProtectSystem=strict
+    ProtectHome=yes
+    PrivateTmp=yes
+
+Original write allowlist:
+    /run
+    /var/lib/monit
+    /var/log
+
+Postfix local sendmail uses postdrop, which must create a queue file under:
+
+    /var/spool/postfix/maildrop
+
+Monit EXEC children inherit Monit's mount namespace, so the narrow exception
+is required.
+
+We intentionally do NOT disable ProtectSystem=strict.
+
+Drop-in:
+    /etc/systemd/system/monit.service.d/postfix-maildrop.conf
+
+Content:
+
+    [Service]
+
+    # Keep Monit's strict filesystem sandbox.
+    # Permit only local Postfix queue submission by Monit EXEC actions.
+    ReadWritePaths=/var/spool/postfix/maildrop
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    sudo install -d -m 755 /etc/systemd/system/monit.service.d
+
+    sudo tee       /etc/systemd/system/monit.service.d/postfix-maildrop.conf       >/dev/null <<'EOF'
+    [Service]
+
+    # Keep Monit's strict filesystem sandbox.
+    # Permit only local Postfix queue submission by Monit EXEC actions.
+    ReadWritePaths=/var/spool/postfix/maildrop
+    EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl restart monit
+
+Verify:
+
+    systemctl show monit.service       -p ProtectSystem       -p ProtectHome       -p PrivateTmp       -p ReadWritePaths       --no-pager
+
+Expected essentials:
+
+    ProtectSystem=strict
+    ProtectHome=yes
+    PrivateTmp=yes
+
+ReadWritePaths includes:
+
+    /run
+    /var/lib/monit
+    /var/log
+    /var/spool/postfix/maildrop
+
+Verify from Monit's mount namespace:
+
+    MONIT_PID="$(systemctl show monit.service -p MainPID --value)"
+
+    sudo nsenter       -t "$MONIT_PID"       -m       -- findmnt       -T /var/spool/postfix/maildrop       -o TARGET,OPTIONS
+
+This exception was validated by a real Monit-triggered failure alert reaching
+the recipient.
+
+
+======================================================================
+15. VALIDATED MONIT FAILURE TEST
+======================================================================
+
+A disposable systemd service and Monit check were created so no real
+production service needed to be interrupted.
+
+Disposable systemd service:
+    /etc/systemd/system/monit-alert-test.service
+
+Disposable Monit check:
+    /etc/monit/conf.d/monit-alert-test
+
+Failure validation:
+    1. Disposable service started healthy.
+    2. Monit reached OK.
+    3. Disposable service stopped.
+    4. Monit collected exit value 3 / "inactive".
+    5. Monit logged the failure.
+    6. Monit executed /usr/local/sbin/server-monitor-alert.
+    7. Postfix accepted the message.
+    8. Failure email arrived.
+
+This validates the complete failure-alert path without taking down a real
+production service.
+
+
+======================================================================
+16. CURRENT STOPPING POINT
+======================================================================
+
+At the time this runbook was generated:
+
+    Failure alert path:
+        VALIDATED
+
+    Disposable monit-alert-test.service:
+        expected still STOPPED after the successful failure test
+
+    Recovery alert:
+        NOT YET validated
+
+    Disposable test cleanup:
+        NOT YET completed
+
+    30-second Monit EXEC timeout:
+        NOT YET applied
+
+    Final audit:
+        NOT YET completed
+
+Continue with Sections 17-20.
+
+
+======================================================================
+17. COMPLETE RECOVERY ALERT TEST
+======================================================================
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    echo
+    echo "===== MONIT RECOVERY ALERT TEST ====="
+
+    sudo systemctl start monit-alert-test.service
+
+    printf 'test_service_state='
+    systemctl is-active monit-alert-test.service
+
+    echo
+    echo "----- WAIT FOR MONIT TO COLLECT RECOVERY -----"
+    sleep 250
+
+    echo
+    echo "----- MONIT STATUS -----"
+    sudo monit status monitoring-pipeline-systemd
+
+    echo
+    echo "----- RECENT MONIT EVENTS -----"
+    sudo tail -n 20 /var/log/monit.log
+
+    echo
+    echo "----- MAIL QUEUE -----"
+    sudo postqueue -p
+
+    echo
+    echo "===== END RECOVERY ALERT TEST ====="
+
+Target:
+
+    status              OK
+    monitoring status   Monitored
+    last exit value     0
+    last output         active
+
+Expected:
+    One recovery-state email arrives.
+
+If this succeeds:
+    continue.
+
+If it fails:
+    do not remove the disposable fixture yet; inspect Monit and mail logs.
+
+
+======================================================================
+18. REMOVE DISPOSABLE TEST FIXTURE
+======================================================================
+
+Only after both failure AND recovery emails validate.
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+    echo
+    echo "===== REMOVE DISPOSABLE MONIT TEST ====="
+
+    sudo systemctl stop monit-alert-test.service 2>/dev/null || true
+
+    sudo rm -f /etc/monit/conf.d/monit-alert-test
+    sudo rm -f /etc/systemd/system/monit-alert-test.service
+
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed
+
+    sudo monit reload
+    sleep 3
+
+    if sudo monit summary | grep -q 'monitoring-pipeline-systemd'; then
+        echo "monit_test_check=UNEXPECTEDLY_PRESENT"
+    else
+        echo "monit_test_check=removed"
+    fi
+
+    if systemctl list-unit-files --no-legend         | grep -q '^monit-alert-test\.service'; then
+        echo "systemd_test_unit=UNEXPECTEDLY_PRESENT"
+    else
+        echo "systemd_test_unit=removed"
+    fi
+
+Expected:
+
+    monit_test_check=removed
+    systemd_test_unit=removed
+
+
+======================================================================
+19. ADD FINITE TIMEOUT TO MONIT ALERT EXEC ACTIONS
+======================================================================
+
+Purpose:
+    If local mail submission ever blocks, Monit should not leave an EXEC child
+    hanging indefinitely.
+
+Recommended action timeout:
+    30 seconds
+
+Monit syntax:
+
+    exec "/path/to/program" with timeout 30 seconds
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+
+Regenerate resource checks from the authoritative shared thresholds:
+
+    sudo bash <<'EOF'
+    set -euo pipefail
+
+    . /etc/server-monitor/config
+
+    cat > /etc/monit/conf.d/server-resources <<MONIT
+    check system web-prod-01
+
+        if cpu usage > ${CPU_WARN_PERCENT}% for 3 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+        if memory usage > ${RAM_WARN_PERCENT}% for 3 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+
+    check filesystem root-filesystem with path /
+
+        if space usage > ${DISK_WARN_PERCENT}% for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+        if inode usage > ${INODE_WARN_PERCENT}% for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+    MONIT
+
+    chown root:root /etc/monit/conf.d/server-resources
+    chmod 600 /etc/monit/conf.d/server-resources
+    EOF
+
+Regenerate systemd service checks:
+
+    sudo tee /etc/monit/conf.d/systemd-services >/dev/null <<'EOF'
+    check program nginx-systemd
+        with path "/usr/bin/systemctl is-active nginx.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program ssh-systemd
+        with path "/usr/bin/systemctl is-active ssh.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program nftables-systemd
+        with path "/usr/bin/systemctl is-active nftables.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program fail2ban-systemd
+        with path "/usr/bin/systemctl is-active fail2ban.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program postfix-systemd
+        with path "/usr/bin/systemctl is-active postfix.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+
+    check program opendkim-systemd
+        with path "/usr/bin/systemctl is-active opendkim.service"
+        if status != 0 for 2 cycles then
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+        else
+            exec "/usr/local/sbin/server-monitor-alert" with timeout 30 seconds
+    EOF
+
+    sudo chown root:root /etc/monit/conf.d/systemd-services
+    sudo chmod 600 /etc/monit/conf.d/systemd-services
+
+Validate BEFORE reload:
+
+    sudo monit -t
+
+Expected:
+
+    Control file syntax OK
+
+Then:
+
+    sudo monit reload
+
+    # Program checks are asynchronous; allow them to settle.
+    sleep 250
+
+    sudo monit summary
+
+
+======================================================================
+20. FINAL PRODUCTION AUDIT
+======================================================================
+
+PUBLIC SERVER
+
+SAFE TO PASTE: YES
+REDACT:
+    - public IPv4 if desired
+    - sender/recipient addresses only if they appear in a non-empty queue
+DO NOT PASTE:
+    - DKIM private key
+    - /etc/monit/conf.d/local-control
+    - any secret credentials
+
+    echo
+    echo "===== EMAIL + MONITORING FINAL AUDIT ====="
+
+    echo
+    echo "----- CORE SERVICES -----"
+    for unit in       ssh.service       nginx.service       nftables.service       fail2ban.service       postfix.service       opendkim.service       monit.service
+    do
+        printf '%-24s ' "$unit"
+        systemctl is-active "$unit" || true
+    done
+
+    echo
+    echo "----- MONIT CONFIG -----"
+    sudo monit -t
+
+    echo
+    echo "----- MONIT SUMMARY -----"
+    sudo monit summary
+
+    echo
+    echo "----- MONIT TCP EXPOSURE -----"
+    if sudo ss -lntp | grep -q ':2812'; then
+        echo "monit_tcp_2812=UNEXPECTED_LISTENER"
+    else
+        echo "monit_tcp_2812=not-listening"
+    fi
+
+    echo
+    echo "----- MONIT UNIX CONTROL SOCKET -----"
+    sudo ss -lxnp | grep -F '/run/monit.sock' || true
+
+    echo
+    echo "----- MONIT SYSTEMD SANDBOX -----"
+    systemctl show monit.service       -p ProtectSystem       -p ProtectHome       -p PrivateTmp       -p ReadWritePaths       --no-pager
+
+    echo
+    echo "----- POSTFIX EFFECTIVE CORE CONFIG -----"
+    sudo postconf       myhostname       mydomain       myorigin       mydestination       inet_interfaces       inet_protocols       relayhost       smtp_tls_security_level       smtpd_milters       non_smtpd_milters       milter_protocol       milter_default_action
+
+    echo
+    echo "----- POSTFIX QUEUE -----"
+    sudo postqueue -p
+
+    echo
+    echo "----- DAILY REPORT SCRIPT -----"
+    sudo bash -n /usr/local/sbin/server-health-report       && echo "server_health_report_syntax=valid"
+
+    echo
+    echo "----- ALERT SCRIPT -----"
+    sudo bash -n /usr/local/sbin/server-monitor-alert       && echo "server_monitor_alert_syntax=valid"
+
+    echo
+    echo "----- DAILY TIMER -----"
+    printf 'enabled='
+    systemctl is-enabled server-health-report.timer
+
+    printf 'active='
+    systemctl is-active server-health-report.timer
+
+    systemctl list-timers server-health-report.timer --all --no-pager
+
+    echo
+    echo "----- FAILED SYSTEMD UNITS -----"
+    systemctl --failed --no-pager
+
+    echo
+    echo "----- MONIT TEST FIXTURE -----"
+    if [ -e /etc/monit/conf.d/monit-alert-test ]        || [ -e /etc/systemd/system/monit-alert-test.service ]; then
+        echo "disposable_test_fixture=UNEXPECTEDLY_PRESENT"
+    else
+        echo "disposable_test_fixture=removed"
+    fi
+
+    echo
+    echo "===== END FINAL AUDIT ====="
+
+
+LOCAL CLIENT
+
+SAFE TO PASTE: YES
+REDACT: public IPv4 if desired.
+
+    echo "===== MAIL DNS FINAL AUDIT ====="
+
+    echo "-- forward --"
+    dig +short A web-prod-01.nathanbrenton.com
+
+    echo "-- reverse --"
+    dig +short -x 45.32.88.137
+
+    echo "-- SPF / Google --"
+    dig @8.8.8.8 +short TXT ops.nathanbrenton.com
+
+    echo "-- SPF / Cloudflare --"
+    dig @1.1.1.1 +short TXT ops.nathanbrenton.com
+
+    echo "-- DMARC --"
+    dig +short TXT _dmarc.ops.nathanbrenton.com
+
+    echo "-- DKIM --"
+    dig +short TXT webprod01-202608._domainkey.ops.nathanbrenton.com
+
+    echo "===== END MAIL DNS FINAL AUDIT ====="
+
+Target Monit summary after initialization:
+
+    web-prod-01          OK
+    root-filesystem      OK
+    nginx-systemd        OK
+    ssh-systemd          OK
+    nftables-systemd     OK
+    fail2ban-systemd     OK
+    postfix-systemd      OK
+    opendkim-systemd     OK
+
+The disposable monitoring-pipeline-systemd check must be gone.
+
+
+======================================================================
+21. THRESHOLD / TIMING POLICY
+======================================================================
+
+Current initial policy:
+
+    Monit daemon interval: 120 seconds
+
+    CPU:
+        Warn >85% for 3 cycles
+        Approximately 6 minutes sustained
+
+    RAM:
+        Warn >85% for 3 cycles
+        Approximately 6 minutes sustained
+
+    Root disk:
+        Warn >80% for 2 cycles
+        Approximately 4 minutes
+
+    Root inodes:
+        Warn >80% for 2 cycles
+        Approximately 4 minutes
+
+    Production systemd checks:
+        status != 0 for 2 cycles
+
+Caveat:
+    Monit check-program checks are asynchronous, so service-state alerts can
+    take longer than a simple 2 x 120-second calculation.
+
+Recommendation:
+    Leave these conservative values in place initially and tune from real
+    operating experience.
+
+No automatic restarts yet.
+
+
+======================================================================
+22. SECURITY PROPERTIES
+======================================================================
+
+- No Gmail/API/app-password dependency.
+- Recipient provider can be changed centrally.
+- Direct-to-MX Postfix delivery.
+- Outbound mail DKIM-signed.
+- SPF narrowly authorizes the production IPv4.
+- DMARC exists on the operational subdomain.
+- Postfix is not a public inbound SMTP service.
+- No inbound SMTP firewall port is opened.
+- OpenDKIM socket is localhost-only.
+- Monit TCP/2812 is not exposed.
+- Monit CLI uses a root-only Unix socket.
+- Monit remains under ProtectSystem=strict.
+- Only /var/spool/postfix/maildrop is added as a narrow write exception.
+- Production Monit service checks are alert-only.
+- Daily reporting and condition alerts are separated.
+- Alert EXEC actions have a finite timeout after Section 19.
+- Configuration/executables are root-owned with restrictive modes.
+
+
+======================================================================
+23. LIMIT OF INTERNAL MONITORING
+======================================================================
+
+If the entire VPS is powered off, unreachable, disconnected, or unable to
+route outbound mail, software on that same VPS cannot send an alert describing
+that outage.
+
+Optional future improvement:
+    independent EXTERNAL uptime monitoring.
+
+That complements Monit; it does not replace it.
+
+
+======================================================================
+24. MAINTENANCE QUICK REFERENCE
+======================================================================
+
+Change recipient:
+    sudoedit /etc/server-monitor/config
+
+Change only:
+    ADMIN_EMAIL="new-address@example.com"
+
+Then:
+    sudo /usr/local/sbin/server-health-report
+
+
+Check timer:
+
+SAFE TO PASTE: YES
+
+    systemctl list-timers server-health-report.timer --all --no-pager
+
+
+Check Monit:
+
+SAFE TO PASTE: YES
+
+    sudo monit summary
+
+
+Validate Monit:
+
+SAFE TO PASTE: YES
+
+    sudo monit -t
+
+
+Reload Monit:
+
+SAFE TO PASTE: YES
+
+    sudo monit reload
+
+
+Check Monit log:
+
+SAFE TO PASTE: YES
+REDACT: email addresses if any appear.
+
+    sudo tail -n 100 /var/log/monit.log
+
+
+Check mail queue:
+
+SAFE TO PASTE: YES
+REDACT: sender/recipient addresses if queue is non-empty.
+
+    sudo postqueue -p
+
+
+Recent mail activity:
+
+SAFE TO PASTE: YES
+REDACT:
+    sender/recipient email addresses
+    public IPs if desired
+
+    sudo journalctl       --since '-10 minutes'       --no-pager |
+      grep -Ei 'postfix|opendkim' |
+      tail -n 100
+
+
+Immediate daily report:
+
+SAFE TO PASTE: YES
+
+    sudo /usr/local/sbin/server-health-report
+
+
+======================================================================
+25. AUTHORITATIVE CURRENT CHECKPOINT
+======================================================================
+
+Validated:
+    - DNS A/PTR identity
+    - outbound TCP/25 availability
+    - Postfix outbound-only direct-to-MX delivery
+    - OpenDKIM signing
+    - SPF DNS corrected/published
+    - DMARC record published
+    - latest mail reaching Gmail Inbox
+    - shared server-monitor configuration
+    - daily health report script
+    - daily systemd service/timer
+    - Monit 5.34.3
+    - local-only Monit Unix control socket
+    - CPU/RAM/disk/inode Monit checks
+    - six production systemd service checks
+    - generic Monit -> Postfix alert bridge
+    - strict Monit sandbox preserved
+    - narrow Postfix maildrop write exception
+    - real Monit-triggered disposable FAILURE alert delivered
+
+Still to validate/apply:
+    1. Disposable RECOVERY alert.
+    2. Remove disposable test fixture.
+    3. Apply 30-second Monit EXEC timeout.
+    4. Run final audit.
+    5. If not already confirmed after SPF propagation, inspect one final real
+       message for SPF PASS / DKIM PASS / DMARC PASS.
+
+
+======================================================================
+26. PRIMARY REFERENCES
+======================================================================
+
+Monit:
+    https://mmonit.com/monit/documentation/monit.html
+
+systemd timer:
+    https://www.freedesktop.org/software/systemd/man/systemd.timer.html
+
+systemd sandboxing:
+    https://www.freedesktop.org/software/systemd/man/systemd.exec.html
+
+Postfix architecture:
+    https://www.postfix.org/OVERVIEW.html
+
+Postfix sendmail:
+    https://www.postfix.org/sendmail.1.html
+
+Postfix postdrop:
+    https://www.postfix.org/postdrop.1.html
+
+SPF:
+    https://www.rfc-editor.org/info/rfc7208
+
+DMARC:
+    https://www.rfc-editor.org/info/rfc9989
+
+
+END OF RUNBOOK

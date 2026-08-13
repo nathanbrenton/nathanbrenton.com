@@ -1,0 +1,1279 @@
+:root {
+  color-scheme: dark;
+
+  /* Banner-derived dark palette and elevation scale. */
+  --bg: #071011;
+  --surface-1: #0d1718;
+  --surface-2: #142021;
+  --surface-3: #1b2a2b;
+  --surface-4: #243536;
+
+  --border-subtle: #263536;
+  --border-strong: #3a4b4c;
+
+  --text-primary: #f7f5e8;
+  --text-secondary: #b8c5bf;
+  --text-muted: #91a099;
+
+  --gold: #f4cf18;
+  --gold-soft: #d0ae1c;
+  --green: #169b2e;
+  --green-bright: #31c653;
+  --teal: #2a5d67;
+  --cyan: #56bfd0;
+  --blue: #5678bd;
+
+  --primary: var(--gold);
+  --primary-ink: #10130c;
+  --focus: var(--cyan);
+
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, .20);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, .26);
+  --shadow-3: 0 14px 36px rgba(0, 0, 0, .32);
+
+  --max: 1040px;
+  --radius: 20px;
+  --header-height: 60px;
+  --anchor-offset: calc(var(--header-height) + 52px);
+  --readable: 78ch;
+}
+
+
+* { box-sizing: border-box; }
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: var(--anchor-offset);
+  background: var(--bg);
+}
+body {
+  position: relative;
+  isolation: isolate;
+  margin: 0;
+  min-width: 320px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+/* Full-page visual layer. Keeping this fixed while the interface scrolls over
+   it creates the broadest, gentlest parallax effect without scroll scripting. */
+body::before {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(180deg, rgba(7, 16, 17, .78) 0%, rgba(7, 16, 17, .64) 42%, rgba(7, 16, 17, .76) 100%),
+    radial-gradient(circle at 88% 8%, rgba(244, 207, 24, .045), transparent 28rem),
+    url('./assets/parallax/water-shimmer-mobile.webp');
+  background-size: cover;
+  background-position: center 46%;
+  background-repeat: no-repeat;
+  transform: scale(1.035);
+  transform-origin: center;
+}
+
+@media (max-width: 699px), (orientation: landscape) and (max-height: 600px) {
+  body::before {
+    transform: translate3d(0, var(--page-parallax-y, 0px), 0) scale(1.10);
+    will-change: transform;
+  }
+}
+
+@media (min-width: 700px), (orientation: landscape) {
+  body::before {
+    background-image:
+      linear-gradient(180deg, rgba(7, 16, 17, .78) 0%, rgba(7, 16, 17, .62) 42%, rgba(7, 16, 17, .76) 100%),
+      radial-gradient(circle at 88% 8%, rgba(244, 207, 24, .045), transparent 28rem),
+      url('./assets/parallax/water-shimmer-desktop.webp');
+    background-position: center 48%;
+  }
+}
+
+a { color: inherit; }
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-4);
+  color: var(--text-primary);
+  font-weight: 800;
+  text-decoration: none;
+  transform: translateY(calc(-100% - 16px));
+}
+
+.skip-link:focus { transform: translateY(0); }
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--header-height);
+  padding: 0 16px;
+  background: rgba(7, 16, 17, 0.84);
+  border-bottom: 1px solid rgba(58, 75, 76, .58);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .018);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.site-header-inner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-ink);
+  box-shadow: 0 3px 12px rgba(244, 207, 24, .16);
+  text-decoration: none;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-left: auto;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.section-nav { display: none; }
+
+.social-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.social-nav a {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.social-nav a:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.section-nav a.is-active,
+.section-nav a[aria-current="location"] {
+  color: var(--gold);
+}
+
+.social-nav svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+}
+
+main, footer {
+  width: min(calc(100% - 24px), var(--max));
+  margin-inline: auto;
+}
+
+/* Pull the page canvas behind the sticky translucent header so the
+   banner begins at the physical top of the viewport. */
+main {
+  margin-top: calc(-1 * var(--header-height));
+  padding: 0 0 44px;
+}
+
+#about,
+#projects {
+  scroll-margin-top: var(--anchor-offset);
+}
+
+.card, .project-card {
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, rgba(255,255,255,.018), transparent 34%), var(--surface-1);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+
+.profile-card { overflow: hidden; }
+.banner {
+  position: relative;
+  min-height: 172px;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(135deg, #29303d, #0d1118 62%, #213310);
+}
+
+.banner::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -9% 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(180deg, rgba(7, 9, 13, .04) 0%, rgba(7, 9, 13, .04) 50%, rgba(7, 9, 13, .18) 72%, rgba(7, 9, 13, .62) 100%),
+    url('./assets/banner-mobile.webp');
+  background-size: cover;
+  background-position: center 29%;
+  background-repeat: no-repeat;
+  transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.035);
+  transform-origin: center;
+  will-change: transform;
+}
+
+.banner::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: auto 0 0;
+  height: 46%;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(13, 23, 24, 0) 0%,
+    rgba(13, 23, 24, .58) 70%,
+    var(--surface-1) 100%
+  );
+}
+
+.profile-body { padding: 0 18px 20px; }
+.avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 98px;
+  height: 98px;
+  margin-top: -49px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 4px solid var(--surface-1);
+  border-radius: 50%;
+  background: var(--surface-4);
+  box-shadow: var(--shadow-2);
+  font-size: 1.6rem;
+  font-weight: 900;
+}
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: var(--gold);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+h1, h2, h3, p { margin-top: 0; }
+h1, h2 { text-wrap: balance; }
+p { text-wrap: pretty; }
+h1 { margin-bottom: 6px; font-size: clamp(2rem, 9vw, 4.2rem); line-height: .95; letter-spacing: -.055em; }
+h2 { margin-bottom: 12px; font-size: clamp(1.35rem, 5vw, 2rem); line-height: 1.1; letter-spacing: -.03em; }
+h3 { margin-bottom: 4px; font-size: 1.02rem; }
+.headline { max-width: 720px; margin-bottom: 5px; font-size: 1.02rem; }
+.location, .muted { color: var(--text-muted); }
+.location { margin-bottom: 0; font-size: .88rem; }
+
+.primary-actions { display: grid; grid-template-columns: 1fr; gap: 9px; margin-top: 20px; }
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  text-decoration: none;
+  font-weight: 800;
+}
+.button-primary {
+  background: var(--primary);
+  color: var(--primary-ink);
+  box-shadow: 0 4px 14px rgba(244, 207, 24, .14);
+}
+.button-primary:hover { background: #ffe04a; }
+.button-secondary {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.button-secondary:hover {
+  background: var(--surface-3);
+  border-color: #506364;
+}
+.button-hiplingo {
+  border-color: rgba(49, 198, 83, .38);
+  background:
+    linear-gradient(145deg, rgba(49, 198, 83, .10), rgba(42, 93, 103, .06)),
+    var(--surface-2);
+}
+.button-hiplingo:hover {
+  border-color: rgba(49, 198, 83, .72);
+  background:
+    linear-gradient(145deg, rgba(49, 198, 83, .16), rgba(42, 93, 103, .10)),
+    var(--surface-3);
+}
+
+.section-card { margin-top: 14px; padding: 20px; }
+.section-card > p { max-width: var(--readable); }
+
+/* Progressive-enhancement parallax: the card remains fully readable with
+   JavaScript disabled; JS only changes --parallax-y while it is visible. */
+.parallax-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--surface-1);
+}
+
+.parallax-card::before,
+.parallax-card::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.parallax-card::before {
+  z-index: -2;
+  inset: -15% -2%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.06);
+  transform-origin: center;
+  will-change: transform;
+}
+
+.parallax-card::after {
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(7, 16, 17, .82), rgba(7, 16, 17, .66)),
+    linear-gradient(180deg, rgba(13, 23, 24, .22), rgba(13, 23, 24, .58));
+}
+
+.parallax-bokeh-trail::before {
+  background-image: url('./assets/parallax/bokeh-trail-mobile.webp');
+  background-position: center 46%;
+}
+
+.parallax-water-bokeh::before {
+  background-image: url('./assets/parallax/water-bokeh-mobile.webp');
+  background-position: center 50%;
+}
+
+.parallax-water-bokeh::after {
+  background:
+    linear-gradient(90deg, rgba(7, 16, 17, .84), rgba(7, 16, 17, .70)),
+    linear-gradient(180deg, rgba(13, 23, 24, .24), rgba(13, 23, 24, .62));
+}
+
+.scroll-reward {
+  min-height: clamp(320px, 54vh, 520px);
+  margin-top: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+
+.parallax-spiral::before {
+  inset: -12% -3%;
+  background-image: url('./assets/parallax/spiral-mobile.webp');
+  background-position: center 48%;
+  transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.04);
+}
+
+.parallax-spiral::after {
+  background:
+    linear-gradient(180deg, rgba(7, 16, 17, .46) 0%, rgba(7, 16, 17, .10) 32%, rgba(7, 16, 17, .08) 70%, rgba(7, 16, 17, .52) 100%);
+}
+.section-heading { margin-bottom: 10px; }
+.section-heading-outside { padding: 8px 2px 0; }
+.section-footer-note { margin: 16px 0 0; color: var(--text-muted); font-size: .86rem; }
+
+.timeline { display: grid; gap: 18px; }
+.timeline-item { padding-left: 15px; border-left: 2px solid var(--border-subtle); }
+.timeline-item p:last-child { margin-bottom: 0; }
+
+.project-grid { display: grid; gap: 12px; }
+.project-card {
+  padding: 18px;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+  background: linear-gradient(180deg, rgba(255,255,255,.018), transparent 34%), var(--surface-2);
+  box-shadow: var(--shadow-2);
+}
+.project-card__image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  margin: 12px 0 14px;
+  border-radius: 12px;
+}
+.project-card p:last-child { margin-bottom: 0; }
+.project-featured {
+  display: grid;
+  gap: 16px;
+  border-color: rgba(49, 198, 83, .30);
+  background:
+    radial-gradient(circle at top right, rgba(49,198,83,.13), transparent 46%),
+    linear-gradient(145deg, rgba(42, 93, 103, .14), transparent 55%),
+    var(--surface-2);
+  box-shadow: var(--shadow-2);
+}
+.project-logo {
+  display: block;
+  width: 128px;
+  height: auto;
+  align-self: center;
+  justify-self: start;
+  opacity: .96;
+}
+.text-link { color: var(--cyan); text-decoration: none; font-weight: 800; }
+.text-link:hover { color: #82d9e6; }
+
+.split-section { display: grid; gap: 28px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-list span {
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: .8rem;
+}
+.credentials ul { margin: 0; padding-left: 19px; }
+.credentials li + li { margin-top: 7px; }
+
+a:focus-visible,
+.button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 4px 34px;
+  color: var(--text-muted);
+  font-size: .8rem;
+}
+footer p { margin: 0; }
+footer a { color: var(--text-muted); }
+footer a:hover { color: var(--text-primary); }
+
+@media (min-width: 700px) {
+  .site-header { padding-inline: 28px; }
+  .section-nav { display: flex; gap: 24px; }
+  .section-nav a { color: var(--text-secondary); text-decoration: none; white-space: nowrap; }
+  .section-nav a:hover { color: var(--text-primary); }
+  .section-nav a.is-active:hover { color: var(--gold); }
+  .top-nav { gap: 14px; font-size: .9rem; }
+  main { padding-top: 0; }
+  .banner { min-height: 245px; }
+  .profile-body { padding: 0 28px 28px; }
+  .avatar { width: 120px; height: 120px; margin-top: -60px; }
+  .profile-copy { padding-right: 40px; }
+  .primary-actions { grid-template-columns: max-content max-content; justify-content: start; }
+  .section-card { padding: 28px; margin-top: 18px; }
+  .timeline-item { display: grid; grid-template-columns: 260px 1fr; gap: 24px; }
+  .project-grid { grid-template-columns: repeat(2, 1fr); }
+  .project-featured { grid-column: 1 / -1; grid-template-columns: 160px 1fr max-content; align-items: center; }
+  .split-section { grid-template-columns: 1.1fr .9fr; }
+}
+
+@media (min-width: 960px) {
+  .project-grid { grid-template-columns: repeat(3, 1fr); }
+  .project-featured { grid-column: 1 / -1; }
+}
+
+/* Phones in landscape are wide but vertically constrained. Keep the app
+   compact, switch to the wide crop, and taper the image into the profile. */
+@media (orientation: landscape) and (max-height: 600px) {
+  main {
+    padding-top: 0;
+  }
+
+  .banner {
+    min-height: clamp(190px, 48vh, 220px);
+  }
+
+  .banner::before {
+    background-image:
+      linear-gradient(180deg, rgba(7, 9, 13, .02) 0%, rgba(7, 9, 13, .02) 50%, rgba(7, 9, 13, .10) 70%, rgba(13, 23, 24, .58) 100%),
+      url('./assets/banner-desktop.webp');
+    background-position: center 47%;
+  }
+
+  .banner::after {
+    height: 48%;
+    background: linear-gradient(
+      180deg,
+      rgba(13, 23, 24, 0) 0%,
+      rgba(13, 23, 24, .72) 62%,
+      var(--surface-1) 100%
+    );
+  }
+
+  /* Keep the expanded image area without making the hero taller in
+     document flow: let the identity content ride over the lower fade. */
+  .profile-body {
+    position: relative;
+    z-index: 1;
+    margin-top: -60px;
+    padding-bottom: 20px;
+  }
+
+  .avatar {
+    width: 96px;
+    height: 96px;
+    margin-top: -36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  [data-parallax] {
+    --parallax-y: 0px !important;
+  }
+
+  .banner::before,
+  .parallax-card::before {
+    will-change: auto;
+  }
+}
+
+/* Mobile portrait polish */
+@media (max-width: 699px) and (orientation: portrait) {
+  main {
+    padding-top: 10px;
+  }
+
+  .banner::before {
+    inset: -38% 0;
+    background-image: url('./assets/banner-mobile.webp');
+    background-position: center 28%;
+    transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.10);
+  }
+
+  .banner::after {
+    display: none;
+  }
+
+  .project-grid {
+    margin-inline: -20px;
+  }
+
+  .scroll-reward {
+    min-height: clamp(280px, 46vh, 400px);
+  }
+}
+
+
+/* Consistent social order across desktop header and mobile hero. */
+a[data-link="linkedin"] { order: 1; }
+a[data-link="github"] { order: 2; }
+a[data-link="youtube"] { order: 3; }
+a[data-link="instagram"] { order: 4; }
+
+/* Mobile business-card shell: desktop keeps scalable navigation; phones let
+   the hero own the top of the viewport. */
+.hero-social-nav {
+  display: none;
+}
+
+@media (max-width: 699px),
+       (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  .site-header {
+    display: none;
+  }
+
+  html {
+    scroll-padding-top: 0;
+  }
+
+  main {
+    margin-top: 0;
+  }
+
+  #about,
+  #projects {
+    scroll-margin-top: 12px;
+  }
+
+  .primary-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-social-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 46px;
+  }
+
+  .hero-social-nav a {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    background: rgba(20, 32, 33, .72);
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+
+  .hero-social-nav a:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-3);
+    color: var(--text-primary);
+  }
+
+  .hero-social-nav svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+}
+
+@media (min-width: 700px) and (min-height: 601px) {
+  .hero-social-nav {
+    display: none;
+  }
+}
+
+/* Desktop expansion: preserve the mobile-first card model while giving wide
+   screens a deliberate application/dashboard composition. */
+@media (min-width: 1040px) {
+  :root {
+    --max: 1280px;
+    --radius: 22px;
+  }
+
+  .site-header {
+    padding-inline: 24px;
+  }
+
+  .site-header-inner {
+    width: min(100%, var(--max));
+    margin-inline: auto;
+  }
+
+  .brand {
+    width: 40px;
+    height: 40px;
+  }
+
+  .top-nav {
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .top-nav a {
+    padding: 8px 12px;
+    border-radius: 999px;
+  }
+
+  .top-nav a:hover {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--border-subtle);
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 18px;
+    padding-top: 0;
+    padding-bottom: 56px;
+  }
+
+  main > * {
+    min-width: 0;
+  }
+
+  .profile-card {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .banner {
+    min-height: 310px;
+  }
+
+  .banner::before {
+    background-image:
+      linear-gradient(180deg, rgba(7, 9, 13, .02) 0%, rgba(7, 9, 13, .02) 50%, rgba(7, 9, 13, .12) 72%, rgba(7, 9, 13, .56) 100%),
+      url('./assets/banner-desktop.webp');
+    background-position: center 47%;
+  }
+
+  .profile-body {
+    display: grid;
+    grid-template-columns: 146px minmax(0, 1fr) max-content;
+    column-gap: 26px;
+    align-items: center;
+    padding: 0 36px 32px;
+  }
+
+  .avatar {
+    width: 140px;
+    height: 140px;
+    margin: -70px 0 0;
+    border-width: 5px;
+    font-size: 2rem;
+    align-self: start;
+  }
+
+  .profile-copy {
+    padding: 22px 0 0;
+  }
+
+  .profile-copy h1 {
+    max-width: 760px;
+    font-size: clamp(3.2rem, 5vw, 5.4rem);
+  }
+
+  .headline {
+    max-width: 780px;
+    font-size: 1.08rem;
+  }
+
+  .primary-actions {
+    display: flex;
+    flex-direction: column;
+    min-width: 166px;
+    margin-top: 22px;
+  }
+
+  .primary-actions .button {
+    width: 100%;
+  }
+
+  .section-card {
+    margin-top: 0;
+    padding: 30px;
+  }
+
+  #about {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .parallax-bokeh-trail::before {
+    background-image: url('./assets/parallax/bokeh-trail-desktop.webp');
+    background-position: center 52%;
+  }
+
+  .parallax-water-bokeh::before {
+    background-image: url('./assets/parallax/water-bokeh-desktop.webp');
+    background-position: center 50%;
+  }
+
+  .parallax-spiral::before {
+    background-image: url('./assets/parallax/spiral-desktop.webp');
+    background-position: center 48%;
+  }
+
+  #projects {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 2px;
+  }
+
+  #projects .section-heading-outside {
+    padding: 6px 6px 2px;
+  }
+
+  .timeline-item {
+    grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.28fr);
+    gap: 22px;
+  }
+
+  .project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+
+  .project-card {
+    min-height: 220px;
+    padding: 24px;
+  }
+
+  .project-featured {
+    grid-column: 1 / -1;
+    min-height: auto;
+    grid-template-columns: 190px minmax(0, 1fr) max-content;
+    padding: 26px 28px;
+  }
+
+  .project-logo {
+    width: 170px;
+    justify-self: center;
+  }
+
+  .split-section {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    grid-template-columns: 1.05fr .95fr;
+    gap: 30px;
+    padding: 22px 30px;
+  }
+
+  .scroll-reward {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    min-height: clamp(280px, 30vw, 420px);
+    margin-top: 2px;
+  }
+
+  footer {
+    width: min(calc(100% - 48px), var(--max));
+    padding-bottom: 42px;
+  }
+}
+
+@media (min-width: 1320px) {
+  :root { --header-height: 66px; }
+
+  .site-header {
+    min-height: var(--header-height);
+  }
+
+  .banner {
+    min-height: 340px;
+  }
+
+  .banner::before {
+    background-position: center 49%;
+  }
+
+  .profile-body {
+    padding-inline: 40px;
+  }
+
+  .project-card {
+    min-height: 236px;
+  }
+}
+
+.project-card__title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.project-card__title-link:hover {
+  color: var(--cyan);
+}
+
+.project-card__image-link {
+  display: block;
+  border-radius: 12px;
+}
+
+.project-card__image-link .project-card__image {
+  transition: transform 160ms ease, filter 160ms ease;
+}
+
+.project-card__image-link:hover .project-card__image {
+  transform: scale(1.012);
+  filter: brightness(1.05);
+}
+
+.project-card__title-link:focus-visible,
+.project-card__image-link:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+
+/* Mobile portrait hero v2:
+   one continuous hero image spans the banner + identity region, then fades
+   away so the page-level water background takes over near the primary CTA. */
+@media (max-width: 699px) and (orientation: portrait) {
+  .profile-card {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+
+  .profile-card::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    inset: -28% -3% -24%;
+    pointer-events: none;
+    background-image: url('./assets/banner-mobile.webp');
+    background-size: cover;
+    background-position: center 18%;
+    background-repeat: no-repeat;
+    transform: translate3d(0, var(--hero-parallax-y, 0px), 0) scale(1.18);
+    transform-origin: center top;
+    will-change: transform;
+
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 34%,
+      rgba(0,0,0,.90) 46%,
+      rgba(0,0,0,.68) 60%,
+      rgba(0,0,0,.40) 72%,
+      rgba(0,0,0,.16) 82%,
+      transparent 90%
+    );
+    mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 34%,
+      rgba(0,0,0,.90) 46%,
+      rgba(0,0,0,.68) 60%,
+      rgba(0,0,0,.40) 72%,
+      rgba(0,0,0,.16) 82%,
+      transparent 90%
+    );
+  }
+
+  .profile-card::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(7,16,17,0) 0%,
+      rgba(7,16,17,.10) 28%,
+      rgba(7,16,17,.36) 42%,
+      rgba(7,16,17,.66) 56%,
+      rgba(7,16,17,.72) 68%,
+      rgba(7,16,17,.42) 78%,
+      rgba(7,16,17,.10) 87%,
+      rgba(7,16,17,0) 92%
+    );
+  }
+
+  .profile-card > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  .profile-card .banner {
+    background: transparent;
+  }
+
+  .profile-card .banner::before,
+  .profile-card .banner::after {
+    display: none;
+  }
+
+  .profile-body {
+    background: transparent;
+  }
+}
+
+
+
+/* Extra mobile portrait overscan gives the fixed page background room to
+   drift without exposing an edge. */
+@media (max-width: 699px) and (orientation: portrait) {
+  body::before {
+    inset: -16% -6%;
+    background-size: cover;
+    transform: translate3d(0, var(--page-parallax-y, 0px), 0) scale(1.06);
+  }
+}
+
+
+/* Mobile landscape hero v2:
+   apply the same continuous-image/depth treatment learned from portrait,
+   using the wide banner asset and extra vertical overscan. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  main {
+    padding-top: 8px;
+  }
+
+  .profile-card {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+
+  .profile-card::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    inset: -34% -4% -28%;
+    pointer-events: none;
+    background-image: url('./assets/banner-desktop.webp');
+    background-size: cover;
+    background-position: center 44%;
+    background-repeat: no-repeat;
+    transform: translate3d(0, var(--hero-parallax-y, 0px), 0) scale(1.16);
+    transform-origin: center top;
+    will-change: transform;
+
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 36%,
+      rgba(0,0,0,.92) 48%,
+      rgba(0,0,0,.70) 61%,
+      rgba(0,0,0,.42) 73%,
+      rgba(0,0,0,.18) 83%,
+      transparent 91%
+    );
+    mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 36%,
+      rgba(0,0,0,.92) 48%,
+      rgba(0,0,0,.70) 61%,
+      rgba(0,0,0,.42) 73%,
+      rgba(0,0,0,.18) 83%,
+      transparent 91%
+    );
+  }
+
+  .profile-card::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(7,16,17,0) 0%,
+      rgba(7,16,17,.08) 28%,
+      rgba(7,16,17,.32) 41%,
+      rgba(7,16,17,.64) 55%,
+      rgba(7,16,17,.70) 67%,
+      rgba(7,16,17,.42) 78%,
+      rgba(7,16,17,.10) 88%,
+      rgba(7,16,17,0) 93%
+    );
+  }
+
+  .profile-card > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  .profile-card .banner {
+    background: transparent;
+  }
+
+  .profile-card .banner::before,
+  .profile-card .banner::after {
+    display: none;
+  }
+
+  .profile-body {
+    background: transparent;
+  }
+
+  body::before {
+    inset: -18% -5%;
+    background-size: cover;
+    transform: translate3d(0, var(--page-parallax-y, 0px), 0) scale(1.06);
+  }
+}
+
+
+
+/* Mobile landscape restoration:
+   keep the wide composition rather than stretching the portrait-style
+   continuous hero treatment across a short viewport. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  .profile-card {
+    background: var(--surface-1);
+  }
+
+  .profile-card::before,
+  .profile-card::after {
+    display: none;
+  }
+
+  .profile-card .banner {
+    min-height: clamp(190px, 48vh, 220px);
+    background: linear-gradient(135deg, #29303d, #0d1118 62%, #213310);
+  }
+
+  .profile-card .banner::before {
+    display: block;
+    inset: -12% 0;
+    background-image:
+      linear-gradient(
+        180deg,
+        rgba(7, 9, 13, 0) 0%,
+        rgba(7, 9, 13, 0) 62%,
+        rgba(7, 9, 13, .08) 76%,
+        rgba(7, 9, 13, .22) 90%,
+        rgba(13, 23, 24, .52) 100%
+      ),
+      url('./assets/banner-desktop.webp');
+    background-size: cover;
+    background-position: center 47%;
+    background-repeat: no-repeat;
+    transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.035);
+  }
+
+  .profile-card .banner::after {
+    display: block;
+    height: 42%;
+    background: linear-gradient(
+      180deg,
+      rgba(13, 23, 24, 0) 0%,
+      rgba(13, 23, 24, .18) 54%,
+      rgba(13, 23, 24, .48) 78%,
+      var(--surface-1) 100%
+    );
+  }
+
+  .profile-body {
+    background: var(--surface-1);
+  }
+}
+
+
+
+/* Mobile landscape seam fix:
+   preserve the restored wide crop, but overlap the identity panel onto the
+   banner so the transition is gradual instead of a hard horizontal break. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  .profile-card .banner {
+    margin-bottom: -104px;
+  }
+
+  .profile-body {
+    position: relative;
+    z-index: 2;
+    padding-top: 104px;
+    background: linear-gradient(
+      180deg,
+      rgba(13, 23, 24, 0) 0px,
+      rgba(13, 23, 24, .08) 28px,
+      rgba(13, 23, 24, .28) 58px,
+      rgba(13, 23, 24, .68) 92px,
+      var(--surface-1) 132px,
+      var(--surface-1) 100%
+    );
+  }
+}
+
+
+
+/* Mobile landscape transparent hero transition:
+   preserve the wide banner crop, but fade the image itself to transparency
+   so the page-level water background takes over with no solid-color seam. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  .profile-card {
+    background: transparent;
+  }
+
+  .profile-card::before,
+  .profile-card::after {
+    display: none;
+  }
+
+  .profile-card .banner {
+    margin-bottom: -156px;
+    background: transparent;
+  }
+
+  .profile-card .banner::before {
+    display: block;
+    inset: -12% 0;
+    background-image: url('./assets/banner-desktop.webp');
+    background-size: cover;
+    background-position: center 12%;
+    background-repeat: no-repeat;
+    transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.035);
+
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 30%,
+      rgba(0,0,0,.96) 40%,
+      rgba(0,0,0,.82) 52%,
+      rgba(0,0,0,.58) 64%,
+      rgba(0,0,0,.32) 74%,
+      rgba(0,0,0,.12) 82%,
+      transparent 88%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      180deg,
+      #000 0%,
+      #000 30%,
+      rgba(0,0,0,.96) 40%,
+      rgba(0,0,0,.82) 52%,
+      rgba(0,0,0,.58) 64%,
+      rgba(0,0,0,.32) 74%,
+      rgba(0,0,0,.12) 82%,
+      transparent 88%,
+      transparent 100%
+    );
+  }
+
+  .profile-card .banner::after {
+    display: none;
+  }
+
+  .profile-body {
+    position: relative;
+    z-index: 2;
+    padding-top: 50px;
+    padding-bottom: 14px;
+    background: transparent;
+  }
+
+  .primary-actions {
+    position: static;
+    display: flex;
+    grid-template-columns: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .hero-social-nav {
+    min-height: 44px;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+}
+

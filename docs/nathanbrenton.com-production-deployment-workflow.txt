@@ -1,0 +1,637 @@
+NATHANBRENTON.COM PRODUCTION DEPLOYMENT WORKFLOW
+=================================================
+
+Purpose
+-------
+This is the known-good production deployment walkthrough for nathanbrenton.com.
+
+It assumes the public server has already been built and hardened, nginx is already
+configured to serve:
+
+    /var/www/nathanbrenton.com/current
+
+and the deployment account / SSH alias already exist:
+
+    local SSH alias: nathan-prod
+    remote user:     deploy-nathan
+
+Production releases live under:
+
+    /var/www/nathanbrenton.com/releases/<UTC_TIMESTAMP>/
+
+The live site is selected only by the atomic symlink:
+
+    /var/www/nathanbrenton.com/current
+        -> releases/<UTC_TIMESTAMP>
+
+IMPORTANT OPERATING RULE
+------------------------
+Treat every release directory as IMMUTABLE.
+
+Never SSH into an existing release and edit its files in place.
+
+All changes originate from the local source tree, are uploaded into a NEW
+timestamped release, validated there, and only then promoted by atomically
+repointing "current".
+
+This makes rollback immediate and allows rsync --link-dest to safely hard-link
+unchanged files between releases.
+
+
+======================================================================
+0. LOCAL SOURCE / PUBLICATION BOUNDARY
+======================================================================
+
+Run on: LOCAL CLIENT
+
+Local source:
+
+    ~/Desktop/websites/nathanbrenton.com
+
+Files/directories that must NOT be published:
+
+    .git/
+    .DS_Store
+    .gitkeep
+    README.md
+    deploy/
+
+The public deployment includes the site files, assets, and public resume, e.g.:
+
+    index.html
+    script.js
+    site-data.js
+    styles.css
+    assets/
+    resume/Nathan-Brenton-Resume.pdf
+
+
+======================================================================
+1. VERIFY DEPLOYMENT SSH ACCESS
+======================================================================
+
+Run on: LOCAL CLIENT
+
+SAFE TO PASTE: YES
+May expose the public hostname/IP and local private-key PATH, but not key contents.
+
+Verify the SSH alias:
+
+    ssh -G nathan-prod | grep -E '^(hostname|user|identityfile|identitiesonly) '
+
+Expected essentials:
+
+    user deploy-nathan
+    identitiesonly yes
+    identityfile ~/.ssh/nathan-prod_deploy_ed25519
+
+Test the connection:
+
+    ssh nathan-prod 'echo "ssh_verified=yes"; hostname; whoami'
+
+Expected:
+
+    ssh_verified=yes
+    web-prod-01
+    deploy-nathan
+
+
+======================================================================
+2. VERIFY CURRENT PRODUCTION RELEASE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+SAFE TO PASTE: YES
+
+    ssh nathan-prod 'printf "current="; readlink /var/www/nathanbrenton.com/current'
+
+Example:
+
+    current=releases/20260812T203356Z
+
+Confirm the target exists:
+
+    ssh nathan-prod 'CURRENT=$(readlink /var/www/nathanbrenton.com/current) && test -d "/var/www/nathanbrenton.com/$CURRENT" && echo "current_target_exists=yes"'
+
+Expected:
+
+    current_target_exists=yes
+
+
+======================================================================
+3. PREPARE DEPLOYMENT VARIABLES
+======================================================================
+
+Run on: LOCAL CLIENT
+
+    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+
+    REMOTE="nathan-prod"
+    ROOT="/var/www/nathanbrenton.com"
+    CURRENT="$(ssh "$REMOTE" "readlink '$ROOT/current'")"
+    LINK_DEST="$ROOT/$CURRENT"
+    RELEASE="$(date -u +%Y%m%dT%H%M%SZ)"
+
+Inspect:
+
+    echo "current=$CURRENT"
+    echo "link_dest=$LINK_DEST"
+    echo "new_release=$RELEASE"
+
+Verify the previous release exists before using it as --link-dest:
+
+    ssh "$REMOTE" "test -d '$LINK_DEST' && echo 'link_dest_exists=yes'"
+
+Expected:
+
+    link_dest_exists=yes
+
+
+======================================================================
+4. DRY-RUN THE PUBLIC PAYLOAD
+======================================================================
+
+Run on: LOCAL CLIENT
+
+SAFE TO PASTE: YES
+Output contains public filenames, paths, timestamps, and rsync indicators.
+
+    rsync -a \
+      --no-owner \
+      --no-group \
+      --delete \
+      --itemize-changes \
+      --dry-run \
+      --exclude='.git/' \
+      --exclude='.DS_Store' \
+      --exclude='.gitkeep' \
+      --exclude='README.md' \
+      --exclude='deploy/' \
+      --link-dest="$LINK_DEST" \
+      ./ \
+      "$REMOTE:$ROOT/releases/$RELEASE/"
+
+Review the payload carefully.
+
+The dry run SHOULD include public files such as:
+
+    index.html
+    script.js
+    site-data.js
+    styles.css
+    assets/...
+    resume/Nathan-Brenton-Resume.pdf
+
+The dry run MUST NOT include:
+
+    README.md
+    deploy/
+    .git/
+    .DS_Store
+    .gitkeep
+
+Do not continue if anything private or deployment-only appears.
+
+
+======================================================================
+5. UPLOAD A NEW RELEASE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+SAFE TO PASTE: YES
+
+IMPORTANT:
+This uploads the new release but does NOT change the live site.
+
+    rsync -a \
+      --no-owner \
+      --no-group \
+      --delete \
+      --itemize-changes \
+      --stats \
+      --exclude='.git/' \
+      --exclude='.DS_Store' \
+      --exclude='.gitkeep' \
+      --exclude='README.md' \
+      --exclude='deploy/' \
+      --link-dest="$LINK_DEST" \
+      ./ \
+      "$REMOTE:$ROOT/releases/$RELEASE/"
+
+Record the release timestamp:
+
+    echo "uploaded_release=$RELEASE"
+
+Verify production was NOT changed:
+
+    ssh "$REMOTE" "printf 'current='; readlink '$ROOT/current'"
+
+The result must still point to the PREVIOUS release.
+
+
+HOW INCREMENTAL UPDATES WORK
+----------------------------
+For later deployments, --link-dest points at the current production release.
+
+Unchanged files are reused as hard links in the new release.
+Only changed/new data must be transferred.
+
+Example:
+
+    Release A
+      index.html
+      styles.css
+      large-background.webp
+
+    Edit only styles.css locally.
+
+    Release B
+      index.html              hard-linked from A
+      styles.css              newly transferred
+      large-background.webp   hard-linked from A
+
+This preserves a complete rollback snapshot without retransferring or duplicating
+unchanged large assets.
+
+Do not modify either release after creation.
+
+
+======================================================================
+6. VALIDATE THE STAGED RELEASE BEFORE PROMOTION
+======================================================================
+
+Run on: LOCAL CLIENT
+
+Set the uploaded release if needed:
+
+    RELEASE="<UPLOADED_UTC_TIMESTAMP>"
+
+Example:
+
+    RELEASE="20260812T203356Z"
+
+
+6A. Confirm release exists
+--------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "test -d '$ROOT/releases/$RELEASE' && echo 'release_exists=yes'"
+
+Expected:
+
+    release_exists=yes
+
+
+6B. Inspect remote file inventory
+---------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "find '$ROOT/releases/$RELEASE' -type f -printf '%P\n' | sort"
+
+
+6C. Confirm forbidden files are absent
+--------------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "test ! -e '$ROOT/releases/$RELEASE/README.md' && test ! -e '$ROOT/releases/$RELEASE/deploy' && test ! -e '$ROOT/releases/$RELEASE/.git' && echo 'forbidden_files=absent'"
+
+Expected:
+
+    forbidden_files=absent
+
+
+6D. Confirm required public files exist
+---------------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" 'for f in index.html script.js site-data.js styles.css resume/Nathan-Brenton-Resume.pdf; do test -f "/var/www/nathanbrenton.com/releases/'"$RELEASE"'/$f" || exit 1; done; echo "required_files=present"'
+
+Expected:
+
+    required_files=present
+
+
+6E. Confirm no symlinks exist inside the release
+------------------------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "if find '$ROOT/releases/$RELEASE' -type l -print -quit | grep -q .; then echo 'release_symlinks=FOUND'; else echo 'release_symlinks=none'; fi"
+
+Expected:
+
+    release_symlinks=none
+
+
+6F. Byte-for-byte comparison against local source
+-------------------------------------------------
+
+SAFE TO PASTE: YES
+
+    rsync -a \
+      --checksum \
+      --delete \
+      --itemize-changes \
+      --dry-run \
+      --no-owner \
+      --no-group \
+      --exclude='.git/' \
+      --exclude='.DS_Store' \
+      --exclude='.gitkeep' \
+      --exclude='README.md' \
+      --exclude='deploy/' \
+      ./ \
+      "$REMOTE:$ROOT/releases/$RELEASE/"
+
+EXPECTED RESULT:
+
+    No rsync change lines.
+
+No output from the comparison means the staged public files match the local
+public source byte-for-byte.
+
+
+6G. Confirm production is still unchanged
+-----------------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "printf 'current='; readlink '$ROOT/current'"
+
+
+======================================================================
+7. ATOMICALLY PROMOTE THE STAGED RELEASE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+SAFE TO PASTE: YES
+
+Set the release to promote:
+
+    RELEASE="<VALIDATED_UTC_TIMESTAMP>"
+
+Promote:
+
+    ssh "$REMOTE" 'ROOT=/var/www/nathanbrenton.com; RELEASE='"$RELEASE"'; OLD=$(readlink "$ROOT/current") || exit 1; rm -f "$ROOT/.current-$RELEASE"; ln -s "releases/$RELEASE" "$ROOT/.current-$RELEASE" && mv -Tf "$ROOT/.current-$RELEASE" "$ROOT/current" && printf "previous=%s\ncurrent=%s\n" "$OLD" "$(readlink "$ROOT/current")"'
+
+Expected:
+
+    previous=releases/<OLD_TIMESTAMP>
+    current=releases/<NEW_TIMESTAMP>
+
+Why this is safe:
+The temporary symlink is built first and then moved over "current" atomically.
+Requests see either the old release or the new release, never a partially
+switched state.
+
+No nginx reload is required.
+
+
+======================================================================
+8. LIVE PRODUCTION VALIDATION
+======================================================================
+
+Run on: LOCAL CLIENT
+
+
+8A. HTTP / HTTPS endpoint checks
+--------------------------------
+
+SAFE TO PASTE: YES
+
+    for url in \
+      https://nathanbrenton.com/ \
+      https://www.nathanbrenton.com/ \
+      https://nathanbrenton.com/resume/Nathan-Brenton-Resume.pdf \
+      https://nathanbrenton.com/assets/banner-desktop.webp
+    do
+      printf '%s -> ' "$url"
+      curl -fsS -o /dev/null -w 'http=%{http_code}\n' "$url" || echo FAILED
+    done
+
+Expected for each:
+
+    http=200
+
+
+8B. Confirm live index.html matches local source
+-----------------------------------------------
+
+SAFE TO PASTE: YES
+SHA-256 hashes of public files are safe to paste.
+
+    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+
+    printf 'local_index='
+    shasum -a 256 index.html | awk '{print $1}'
+
+    printf 'live_index='
+    curl -fsS https://nathanbrenton.com/index.html | shasum -a 256 | awk '{print $1}'
+
+The two hashes must match exactly.
+
+
+8C. Confirm production symlink
+------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh nathan-prod 'printf "current="; readlink /var/www/nathanbrenton.com/current'
+
+Expected:
+
+    current=releases/<NEW_TIMESTAMP>
+
+
+8D. Browser validation
+----------------------
+
+Run manually from a browser.
+
+Verify at minimum:
+
+    - page loads over HTTPS
+    - expected layout appears
+    - parallax/background assets load
+    - project links work
+    - resume link opens
+    - desktop presentation looks correct
+    - mobile presentation looks correct
+
+Do not delete the previous release after validation.
+It is the immediate rollback target.
+
+
+======================================================================
+9. ROLLBACK PROCEDURE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+Use rollback when a newly promoted release has a production problem.
+
+First identify available releases:
+
+    ssh nathan-prod 'find /var/www/nathanbrenton.com/releases -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort'
+
+Confirm the desired rollback release exists:
+
+    ROLLBACK="<PREVIOUS_GOOD_TIMESTAMP>"
+
+    ssh nathan-prod "test -d '/var/www/nathanbrenton.com/releases/$ROLLBACK' && echo 'rollback_target=present'"
+
+Expected:
+
+    rollback_target=present
+
+
+9A. Atomic rollback
+-------------------
+
+SAFE TO PASTE: YES
+
+    ssh nathan-prod 'ROOT=/var/www/nathanbrenton.com; TARGET='"$ROLLBACK"'; rm -f "$ROOT/.rollback-$TARGET"; ln -s "releases/$TARGET" "$ROOT/.rollback-$TARGET" && mv -Tf "$ROOT/.rollback-$TARGET" "$ROOT/current" && printf "current=%s\n" "$(readlink "$ROOT/current")"'
+
+Expected:
+
+    current=releases/<PREVIOUS_GOOD_TIMESTAMP>
+
+
+9B. Validate rollback
+---------------------
+
+SAFE TO PASTE: YES
+
+    printf 'rollback_https='
+    curl -fsS -o /dev/null -w '%{http_code}\n' https://nathanbrenton.com/
+
+Expected:
+
+    rollback_https=200
+
+Also refresh the site in a browser and confirm the previous version is restored.
+
+
+======================================================================
+10. RE-PROMOTE A KNOWN-GOOD NEWER RELEASE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+If the newer release itself is known-good and rollback was only a drill, or after
+the issue has been resolved by selecting the already validated newer release:
+
+    TARGET="<KNOWN_GOOD_NEWER_TIMESTAMP>"
+
+SAFE TO PASTE: YES
+
+    ssh nathan-prod 'ROOT=/var/www/nathanbrenton.com; TARGET='"$TARGET"'; rm -f "$ROOT/.promote-$TARGET"; ln -s "releases/$TARGET" "$ROOT/.promote-$TARGET" && mv -Tf "$ROOT/.promote-$TARGET" "$ROOT/current" && printf "current=%s\n" "$(readlink "$ROOT/current")"'
+
+Validate:
+
+    printf 'production_https='
+    curl -fsS -o /dev/null -w '%{http_code}\n' https://nathanbrenton.com/
+
+Expected:
+
+    production_https=200
+
+Then repeat the live SHA-256 comparison:
+
+    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+
+    printf 'local_index='
+    shasum -a 256 index.html | awk '{print $1}'
+
+    printf 'live_index='
+    curl -fsS https://nathanbrenton.com/index.html | shasum -a 256 | awk '{print $1}'
+
+Hashes must match exactly.
+
+
+======================================================================
+11. NORMAL FUTURE DEPLOYMENT CYCLE
+======================================================================
+
+For every future update:
+
+    1. Make changes locally.
+    2. Verify SSH alias / current release if needed.
+    3. Set:
+           CURRENT="$(ssh "$REMOTE" "readlink '$ROOT/current'")"
+           LINK_DEST="$ROOT/$CURRENT"
+           RELEASE="$(date -u +%Y%m%dT%H%M%SZ)"
+    4. Run rsync dry-run.
+    5. Inspect publication boundary.
+    6. Upload new release with --link-dest.
+    7. Validate staged release.
+    8. Run checksum dry-run; require no change lines.
+    9. Atomically promote.
+   10. Validate HTTPS endpoints.
+   11. Compare local/live index SHA-256.
+   12. Perform browser smoke test.
+   13. Keep at least the previous known-good release available for rollback.
+
+
+======================================================================
+12. QUICK ROLLBACK REFERENCE
+======================================================================
+
+Run on: LOCAL CLIENT
+
+List releases:
+
+    ssh nathan-prod 'find /var/www/nathanbrenton.com/releases -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort'
+
+Show current:
+
+    ssh nathan-prod 'readlink /var/www/nathanbrenton.com/current'
+
+Rollback:
+
+    TARGET="<GOOD_TIMESTAMP>"
+
+    ssh nathan-prod 'ROOT=/var/www/nathanbrenton.com; TARGET='"$TARGET"'; rm -f "$ROOT/.rollback-$TARGET"; ln -s "releases/$TARGET" "$ROOT/.rollback-$TARGET" && mv -Tf "$ROOT/.rollback-$TARGET" "$ROOT/current" && readlink "$ROOT/current"'
+
+Validate:
+
+    curl -fsS -o /dev/null -w 'http=%{http_code}\n' https://nathanbrenton.com/
+
+
+======================================================================
+13. DO NOT DO THESE THINGS
+======================================================================
+
+Do NOT:
+
+    - edit files directly inside an existing release
+    - rsync directly into /var/www/nathanbrenton.com/current
+    - publish README.md
+    - publish deploy/
+    - publish .git/
+    - delete the previous known-good release immediately after deployment
+    - manually replace files during rollback
+    - reload nginx just to switch releases
+    - weaken SSH authentication settings for deployment convenience
+
+The deployment mechanism is:
+
+    local source
+        -> new immutable timestamped release
+        -> staged validation
+        -> atomic current symlink switch
+        -> live validation
+
+Rollback is:
+
+    current
+        -> previous known-good immutable release
+
+That is the complete known-good nathanbrenton.com deployment lifecycle.

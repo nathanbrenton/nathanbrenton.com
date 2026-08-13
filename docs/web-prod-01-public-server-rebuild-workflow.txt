@@ -1,0 +1,1292 @@
+WEB-PROD-01 PUBLIC SERVER REBUILD WORKFLOW
+Debian 13 (trixie) + nginx
+Domains: nathanbrenton.com + hiplingo.com
+
+Purpose
+=======
+This is a command-by-command rebuild procedure for recreating the validated
+public-server foundation from a fresh Debian 13 host.
+
+It intentionally avoids abandoned/backtracked approaches. In particular:
+
+  - Use nftables directly.
+  - Do NOT use UFW alongside nftables.
+  - Use journald as Fail2ban's SSH log source; do not add rsyslog just for Fail2ban.
+  - Keep nathanbrenton.com, Hiplingo frontend, and Hiplingo published media as
+    separate deployment/write boundaries.
+  - Do not publish the private metadata-editor media-library.
+  - Do not enable automatic reboots after unattended upgrades.
+  - Do not store SSH backup files under /etc/ssh/sshd_config.d/ because this
+    Debian image includes *.conf* from that directory.
+
+This runbook ends at the CURRENT VALIDATED SERVER-READY STATE.
+The following remain intentionally pending and are NOT performed here:
+
+  - real nathanbrenton.com site deployment
+  - real hiplingo.com frontend deployment
+  - metadata-editor published-media export/sync to production
+
+
+FINAL ARCHITECTURE
+==================
+
+nathanbrenton.com
+  /var/www/nathanbrenton.com/
+    releases/<timestamp>/        versioned frontend releases
+    current -> releases/<...>/   atomic active-release symlink
+
+hiplingo.com frontend
+  /var/www/hiplingo.com/app/
+    releases/<timestamp>/        versioned frontend releases
+    current -> releases/<...>/   atomic active-release symlink
+
+hiplingo.com public media
+  /var/www/hiplingo.com/published-media/
+                                 persistent, NOT versioned with frontend
+                                 nginx public URL prefix: /media/
+
+Private metadata-editor media-library
+  NEVER copied to the public server.
+
+Deployment identities
+  deploy-nathan          -> nathan-deploy
+  deploy-hiplingo-app    -> hiplingo-app-deploy
+  deploy-hiplingo-media  -> hiplingo-media-deploy
+
+Administrative SSH identity
+  n8
+
+nginx
+  www-data remains read-only to deployment trees.
+
+Firewall
+  nftables only
+  inbound allow: TCP 22, 80, 443
+  default inbound policy: drop
+
+SSH
+  root login: disabled
+  password auth: disabled
+  keyboard-interactive auth: disabled
+  public-key auth: enabled
+  MaxAuthTries: 3
+  X11 forwarding: disabled
+  AllowUsers: n8 + three deployment users only
+  deployment authorized_keys entries use: restrict
+
+Fail2ban
+  sshd jail only initially
+  backend: systemd/journald
+  banaction: nftables
+  maxretry: 5
+  findtime: 10m
+  bantime: 1h
+
+Automatic updates
+  Debian unattended-upgrades enabled
+  automatic reboot explicitly disabled
+
+DNS
+  nathanbrenton.com: A @ and A www -> server IPv4
+  hiplingo.com:       A @ and A www -> server IPv4
+  TTL: 1 hour
+  no AAAA records unless IPv6 is deliberately configured later
+  no conflicting www CNAME records
+
+TLS
+  Let's Encrypt / Certbot
+  separate certificates/configuration for each domain + www hostname
+
+
+OUTPUT-SAFETY LEGEND
+====================
+
+SAFE TO PASTE
+  Output should not contain credentials or private key material.
+
+SAFE TO PASTE; PRIVACY-SENSITIVE
+  Output may contain the public server IP, client public IP, SSH public-key
+  fingerprint, account names, or certificate/domain information. These are not
+  authentication secrets, but may be redacted for privacy.
+
+DO NOT PASTE
+  Private keys, passwords, API tokens, recovery codes, or the contents of any
+  private-key file.
+
+Never run: cat ~/.ssh/<private-key>
+Never paste a sudo password; normal sudo prompts do not echo it.
+
+
+0. LOCAL CLIENT — DEFINE REBUILD VARIABLES
+==========================================
+
+Run on: LOCAL CLIENT (Mac)
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE because SERVER_IP is public.
+
+Replace <PUBLIC_IPV4> with the new server IPv4.
+
+    export SERVER_IP='<PUBLIC_IPV4>'
+    export SERVER_HOST='web-prod-01'
+
+Use dedicated local SSH key filenames. If rebuilding an existing server and
+these keys already exist, REUSE them rather than generating replacements.
+
+    export ADMIN_KEY="$HOME/.ssh/web-prod-01-n8"
+    export DEPLOY_NATHAN_KEY="$HOME/.ssh/web-prod-01-deploy-nathan"
+    export DEPLOY_HIPLINGO_APP_KEY="$HOME/.ssh/web-prod-01-deploy-hiplingo-app"
+    export DEPLOY_HIPLINGO_MEDIA_KEY="$HOME/.ssh/web-prod-01-deploy-hiplingo-media"
+
+Generate only missing keys:
+
+    test -f "$ADMIN_KEY" || ssh-keygen -t ed25519 -f "$ADMIN_KEY" -C 'n8@web-prod-01'
+    test -f "$DEPLOY_NATHAN_KEY" || ssh-keygen -t ed25519 -f "$DEPLOY_NATHAN_KEY" -C 'deploy-nathan@web-prod-01'
+    test -f "$DEPLOY_HIPLINGO_APP_KEY" || ssh-keygen -t ed25519 -f "$DEPLOY_HIPLINGO_APP_KEY" -C 'deploy-hiplingo-app@web-prod-01'
+    test -f "$DEPLOY_HIPLINGO_MEDIA_KEY" || ssh-keygen -t ed25519 -f "$DEPLOY_HIPLINGO_MEDIA_KEY" -C 'deploy-hiplingo-media@web-prod-01'
+
+Do NOT paste the contents of the private key files.
+
+
+1. LOCAL CLIENT — INITIAL PROVIDER ACCESS
+=========================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+Use the provider's initial console/injected SSH credential to enter the fresh
+server as root. The exact initial provider authentication method is external
+to this runbook.
+
+    ssh root@"$SERVER_IP"
+
+Keep this initial session open until n8 has been created, keyed, hardened, and
+successfully tested in a separate terminal.
+
+
+2. PUBLIC SERVER — PATCH OS AND INSTALL REQUIRED PACKAGES
+=========================================================
+
+Run on: PUBLIC SERVER as root
+Output: SAFE TO PASTE.
+
+    apt update
+    apt full-upgrade -y
+
+Install only the packages needed for the validated stack:
+
+    apt install -y \
+      sudo \
+      openssh-server \
+      nftables \
+      nginx \
+      certbot \
+      python3-certbot-nginx \
+      fail2ban \
+      unattended-upgrades \
+      rsync \
+      curl \
+      ca-certificates
+
+Set/confirm hostname:
+
+    hostnamectl set-hostname web-prod-01
+
+Validate OS and core versions:
+
+    . /etc/os-release
+    printf 'os=%s %s\n' "$NAME" "$VERSION"
+    uname -r
+    nginx -v
+    ssh -V
+
+
+3. PUBLIC SERVER — REMOVE UFW BEFORE CONFIGURING NFTABLES
+=========================================================
+
+Run on: PUBLIC SERVER as root
+Output: SAFE TO PASTE.
+
+IMPORTANT: this is deliberately done BEFORE nftables configuration.
+Do not recreate the earlier UFW/nftables interference.
+
+    if dpkg-query -W ufw >/dev/null 2>&1; then
+        systemctl disable --now ufw 2>/dev/null || true
+        apt purge -y ufw
+    fi
+
+    dpkg-query -W ufw 2>/dev/null || echo 'ufw_package=absent'
+
+Do not purge the generic iptables compatibility packages merely because they
+exist; the server's active firewall policy will be nftables.
+
+
+4. PUBLIC SERVER — CREATE ADMIN AND DEPLOYMENT IDENTITIES
+=========================================================
+
+Run on: PUBLIC SERVER as root
+Output: SAFE TO PASTE.
+
+Create n8 if absent:
+
+    id n8 >/dev/null 2>&1 || adduser --disabled-password --gecos '' n8
+    usermod -aG sudo n8
+
+Set n8's local sudo password interactively.
+
+    passwd n8
+
+INPUT SAFETY: DO NOT PASTE the password itself. The passwd command does not
+echo the password on screen. This password is for local sudo/PAM use; SSH
+password authentication will still be disabled below.
+
+Create deployment groups if absent:
+
+    getent group nathan-deploy >/dev/null || groupadd nathan-deploy
+    getent group hiplingo-app-deploy >/dev/null || groupadd hiplingo-app-deploy
+    getent group hiplingo-media-deploy >/dev/null || groupadd hiplingo-media-deploy
+
+Create deployment users with their deployment group as primary group:
+
+    id deploy-nathan >/dev/null 2>&1 || \
+      useradd -m -s /bin/bash -g nathan-deploy deploy-nathan
+
+    id deploy-hiplingo-app >/dev/null 2>&1 || \
+      useradd -m -s /bin/bash -g hiplingo-app-deploy deploy-hiplingo-app
+
+    id deploy-hiplingo-media >/dev/null 2>&1 || \
+      useradd -m -s /bin/bash -g hiplingo-media-deploy deploy-hiplingo-media
+
+Ensure deployment users do not have usable passwords:
+
+    passwd -l deploy-nathan
+    passwd -l deploy-hiplingo-app
+    passwd -l deploy-hiplingo-media
+
+Prepare SSH directories without exposing key material:
+
+    install -d -m 700 -o n8 -g n8 /home/n8/.ssh
+    install -d -m 700 -o deploy-nathan -g nathan-deploy /home/deploy-nathan/.ssh
+    install -d -m 700 -o deploy-hiplingo-app -g hiplingo-app-deploy /home/deploy-hiplingo-app/.ssh
+    install -d -m 700 -o deploy-hiplingo-media -g hiplingo-media-deploy /home/deploy-hiplingo-media/.ssh
+
+Validate identities:
+
+    id n8
+    id deploy-nathan
+    id deploy-hiplingo-app
+    id deploy-hiplingo-media
+
+
+5. LOCAL CLIENT — INSTALL PUBLIC KEYS ON THE SERVER
+===================================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+The private keys remain on the local client.
+Only .pub files are transmitted.
+
+Install n8's admin key through the still-open root SSH path:
+
+    cat "$ADMIN_KEY.pub" | ssh root@"$SERVER_IP" \
+      'cat > /home/n8/.ssh/authorized_keys && \
+       chown n8:n8 /home/n8/.ssh/authorized_keys && \
+       chmod 600 /home/n8/.ssh/authorized_keys'
+
+Install deployment keys with OpenSSH's "restrict" authorized_keys option.
+This disables forwarding, PTY allocation, X11 forwarding, agent forwarding,
+and ~/.ssh/rc for those keys while still allowing deployment transport.
+
+    { printf 'restrict '; cat "$DEPLOY_NATHAN_KEY.pub"; } | \
+      ssh root@"$SERVER_IP" \
+      'cat > /home/deploy-nathan/.ssh/authorized_keys && \
+       chown deploy-nathan:nathan-deploy /home/deploy-nathan/.ssh/authorized_keys && \
+       chmod 600 /home/deploy-nathan/.ssh/authorized_keys'
+
+    { printf 'restrict '; cat "$DEPLOY_HIPLINGO_APP_KEY.pub"; } | \
+      ssh root@"$SERVER_IP" \
+      'cat > /home/deploy-hiplingo-app/.ssh/authorized_keys && \
+       chown deploy-hiplingo-app:hiplingo-app-deploy /home/deploy-hiplingo-app/.ssh/authorized_keys && \
+       chmod 600 /home/deploy-hiplingo-app/.ssh/authorized_keys'
+
+    { printf 'restrict '; cat "$DEPLOY_HIPLINGO_MEDIA_KEY.pub"; } | \
+      ssh root@"$SERVER_IP" \
+      'cat > /home/deploy-hiplingo-media/.ssh/authorized_keys && \
+       chown deploy-hiplingo-media:hiplingo-media-deploy /home/deploy-hiplingo-media/.ssh/authorized_keys && \
+       chmod 600 /home/deploy-hiplingo-media/.ssh/authorized_keys'
+
+Do not print authorized_keys contents during validation.
+
+
+6. LOCAL CLIENT — PROVE N8 LOGIN BEFORE DISABLING ROOT SSH
+=========================================================
+
+Run on: LOCAL CLIENT, in a SECOND terminal
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+    ssh -i "$ADMIN_KEY" n8@"$SERVER_IP"
+
+Inside the new session:
+
+    whoami
+    sudo -v
+
+Expected:
+
+    whoami -> n8
+    sudo accepts n8's local server password if configured/prompted
+
+Keep both sessions open until SSH hardening has been validated.
+
+
+7. PUBLIC SERVER — APPLY FINAL SSH HARDENING DIRECTLY
+=====================================================
+
+Run on: PUBLIC SERVER from the working n8 session
+Output: SAFE TO PASTE.
+
+Do not edit cloud-init's packaged file to fight its settings.
+Use an earlier local include; OpenSSH uses the first obtained value for most
+settings, so 00-local-hardening.conf wins before 50-cloud-init.conf.
+
+Do not place backups in /etc/ssh/sshd_config.d/ because the main config on this
+server includes *.conf* and would parse a backup such as *.conf.backup.
+
+    sudo install -d -m 700 /root/ssh-config-backups
+
+    if sudo test -f /etc/ssh/sshd_config.d/00-local-hardening.conf; then
+        sudo cp -a \
+          /etc/ssh/sshd_config.d/00-local-hardening.conf \
+          /root/ssh-config-backups/00-local-hardening.conf.pre-rebuild
+    fi
+
+Write the final validated policy:
+
+    sudo tee /etc/ssh/sshd_config.d/00-local-hardening.conf >/dev/null <<'EOF_SSH'
+# Local production-server SSH hardening.
+
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+
+MaxAuthTries 3
+X11Forwarding no
+
+AllowUsers n8 deploy-nathan deploy-hiplingo-app deploy-hiplingo-media
+EOF_SSH
+
+Validate BEFORE reload:
+
+    sudo sshd -t
+
+    sudo sshd -T | grep -E \
+    '^(maxauthtries|permitrootlogin|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|x11forwarding|allowusers) '
+
+Expected effective values:
+
+    maxauthtries 3
+    permitrootlogin no
+    pubkeyauthentication yes
+    passwordauthentication no
+    kbdinteractiveauthentication no
+    x11forwarding no
+    allowusers n8
+    allowusers deploy-nathan
+    allowusers deploy-hiplingo-app
+    allowusers deploy-hiplingo-media
+
+Reload, do not restart the whole host:
+
+    sudo systemctl reload ssh
+    systemctl is-active ssh
+
+
+8. LOCAL CLIENT — PROVE A FRESH HARDENED N8 CONNECTION
+======================================================
+
+Run on: LOCAL CLIENT in another terminal
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+    ssh -i "$ADMIN_KEY" n8@"$SERVER_IP"
+
+Do not continue until this fresh login succeeds.
+
+Once validated, root SSH is no longer needed. For defense in depth, remove any
+remaining root authorized-key entry while retaining provider console access:
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+    sudo install -d -m 700 -o root -g root /root/.ssh
+    sudo touch /root/.ssh/authorized_keys
+    sudo chmod 600 /root/.ssh/authorized_keys
+    sudo truncate -s 0 /root/.ssh/authorized_keys
+
+Verify key counts without printing keys:
+
+    sudo find /root /home -path '*/.ssh/authorized_keys' -type f -print0 2>/dev/null |
+    while IFS= read -r -d '' file; do
+        count=$(sudo awk '
+          /^[[:space:]]*#/ { next }
+          /^[[:space:]]*$/ { next }
+          { n++ }
+          END { print n+0 }
+        ' "$file")
+        owner=$(sudo stat -c '%U' "$file")
+        printf 'owner=%s keys=%s\n' "$owner" "$count"
+    done
+
+Validated target state:
+
+    root                    0 keys
+    n8                      1 key
+    deploy-nathan           1 key
+    deploy-hiplingo-app     1 key
+    deploy-hiplingo-media   1 key
+
+Provider-created accounts not present in AllowUsers cannot SSH even if their
+local shell remains installed.
+
+
+9. PUBLIC SERVER — CONFIGURE NFTABLES AS THE ONLY HOST FIREWALL
+==============================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Keep a known-good SSH session open while applying firewall changes.
+
+    sudo tee /etc/nftables.conf >/dev/null <<'EOF_NFT'
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        ct state invalid drop
+        ct state established,related accept
+
+        iifname "lo" accept
+
+        ip protocol icmp accept
+        meta l4proto ipv6-icmp accept
+
+        tcp dport { 22, 80, 443 } ct state new accept
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}
+EOF_NFT
+
+Syntax-check without applying:
+
+    sudo nft -c -f /etc/nftables.conf
+
+Enable and apply:
+
+    sudo systemctl enable nftables
+    sudo systemctl restart nftables
+
+Validate:
+
+    systemctl is-active nftables
+    systemctl is-enabled nftables
+    sudo nft list ruleset
+
+Expected base table:
+
+    table inet filter
+
+Expected inbound policy:
+
+    established/related accepted
+    loopback accepted
+    ICMP/ICMPv6 accepted
+    TCP 22/80/443 accepted
+    everything else inbound dropped
+
+
+10. LOCAL CLIENT — PROVE SSH AFTER FIREWALL ACTIVATION
+=====================================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+    ssh -i "$ADMIN_KEY" n8@"$SERVER_IP" 'echo ssh-after-nftables=ok'
+
+Expected:
+
+    ssh-after-nftables=ok
+
+
+11. PUBLIC SERVER — CONFIGURE UNATTENDED SECURITY/DEBIAN UPDATES
+===============================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+The Debian package is already installed in step 2. Explicitly enable periodic
+package-list refreshes and unattended upgrades:
+
+    sudo tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null <<'EOF_APT'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF_APT
+
+Explicitly prevent unattended rebooting:
+
+    sudo tee /etc/apt/apt.conf.d/52unattended-upgrades-local >/dev/null <<'EOF_REBOOT'
+// Local production-server policy.
+// Package updates may install automatically.
+// Reboots remain an explicit administrator action.
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF_REBOOT
+
+Enable/start Debian APT timers:
+
+    sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+
+Validate effective policy:
+
+    apt-config dump | grep -E '^APT::Periodic::'
+    apt-config dump | grep -E '^Unattended-Upgrade::Automatic-Reboot '
+
+    systemctl is-enabled apt-daily.timer
+    systemctl is-active apt-daily.timer
+    systemctl is-enabled apt-daily-upgrade.timer
+    systemctl is-active apt-daily-upgrade.timer
+
+    systemctl list-timers --all apt-daily.timer apt-daily-upgrade.timer --no-pager
+
+Parse/dry-run unattended upgrades:
+
+    sudo unattended-upgrade --dry-run
+
+Expected reboot policy:
+
+    Unattended-Upgrade::Automatic-Reboot "false";
+
+Keep Debian's normal packaged Origins-Pattern policy; do not unnecessarily
+replace it with a custom security-only origin list unless policy changes later.
+
+
+12. PUBLIC SERVER — CONFIGURE FAIL2BAN FOR SSH + NFTABLES
+========================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE; Fail2ban status may show hostile public IP addresses.
+Those IP addresses are not credentials, but may be redacted for privacy.
+
+This Debian server uses journald and has no /var/log/auth.log requirement.
+Do not install/enable rsyslog solely for Fail2ban.
+
+Confirm the nftables action exists:
+
+    test -f /etc/fail2ban/action.d/nftables.conf || {
+        echo 'ERROR: nftables Fail2ban action missing'
+        exit 1
+    }
+
+Create one conservative SSH jail:
+
+    sudo tee /etc/fail2ban/jail.d/sshd.local >/dev/null <<'EOF_F2B'
+[sshd]
+enabled = true
+backend = systemd
+
+banaction = nftables
+port = ssh
+
+maxretry = 5
+findtime = 10m
+bantime = 1h
+
+usedns = no
+EOF_F2B
+
+Validate configuration BEFORE restart:
+
+    sudo fail2ban-client -t
+
+Expected:
+
+    OK: configuration test is successful
+
+Enable/restart:
+
+    sudo systemctl enable fail2ban
+    sudo systemctl restart fail2ban
+
+A client ping issued immediately after restart can race the socket startup.
+Wait for the service to report ready before treating a failed ping as a fault:
+
+    sudo journalctl -u fail2ban -n 20 --no-pager
+    sudo fail2ban-client ping
+    sudo fail2ban-client status
+    sudo fail2ban-client status sshd
+
+Expected:
+
+    Server replied: pong
+    Jail list: sshd
+
+Fail2ban's nftables table is created on demand when the first ban occurs.
+Prove enforcement with a TEST-NET address, never your actual client IP:
+
+    TEST_IP='192.0.2.123'
+
+    sudo fail2ban-client set sshd banip "$TEST_IP"
+    sudo fail2ban-client status sshd
+    sudo nft list tables
+    sudo nft list ruleset | grep -n -A20 -B5 -E 'f2b|192\.0\.2\.123' || true
+
+Expected while test ban is active:
+
+    table inet filter
+    table inet f2b-table
+
+and the f2b sshd address set should contain 192.0.2.123.
+
+Remove the synthetic ban:
+
+    sudo fail2ban-client set sshd unbanip "$TEST_IP"
+    sudo fail2ban-client status sshd
+
+Do not add nginx Fail2ban jails yet; tune those only after real production logs
+justify them.
+
+
+13. PUBLIC SERVER — CREATE DEPLOYMENT FILESYSTEM BOUNDARIES
+==========================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Create Nathan's independent release tree:
+
+    sudo install -d -m 2775 -o root -g nathan-deploy \
+      /var/www/nathanbrenton.com
+
+    sudo install -d -m 2775 -o root -g nathan-deploy \
+      /var/www/nathanbrenton.com/releases
+
+Create Hiplingo's independent frontend tree:
+
+    sudo install -d -m 755 -o root -g root \
+      /var/www/hiplingo.com
+
+    sudo install -d -m 2775 -o root -g hiplingo-app-deploy \
+      /var/www/hiplingo.com/app
+
+    sudo install -d -m 2775 -o root -g hiplingo-app-deploy \
+      /var/www/hiplingo.com/app/releases
+
+Create Hiplingo's persistent media tree, separate from frontend releases:
+
+    sudo install -d -m 2775 -o root -g hiplingo-media-deploy \
+      /var/www/hiplingo.com/published-media
+
+SGID mode 2775 ensures newly created children inherit the deployment group.
+Other users, including nginx/www-data, receive read/execute but not write.
+
+Do NOT place metadata-editor's private media-library here.
+Only sanitized published-media output belongs in published-media/.
+
+
+14. PUBLIC SERVER — CREATE BOOTSTRAP RELEASES AND CURRENT SYMLINKS
+================================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+These are placeholders only so nginx/TLS can be validated before real site
+content is deployed.
+
+Nathan bootstrap:
+
+    sudo install -d -m 2775 -o root -g nathan-deploy \
+      /var/www/nathanbrenton.com/releases/bootstrap
+
+    sudo tee /var/www/nathanbrenton.com/releases/bootstrap/index.html >/dev/null <<'EOF_NATHAN_BOOT'
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nathanbrenton.com</title></head>
+<body><h1>nathanbrenton.com</h1><p>Deployment pending.</p></body>
+</html>
+EOF_NATHAN_BOOT
+
+    sudo chown root:nathan-deploy \
+      /var/www/nathanbrenton.com/releases/bootstrap/index.html
+
+    cd /var/www/nathanbrenton.com
+    sudo ln -sfn releases/bootstrap current
+
+Hiplingo bootstrap:
+
+    sudo install -d -m 2775 -o root -g hiplingo-app-deploy \
+      /var/www/hiplingo.com/app/releases/bootstrap
+
+    sudo tee /var/www/hiplingo.com/app/releases/bootstrap/index.html >/dev/null <<'EOF_HIP_BOOT'
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>hiplingo.com</title></head>
+<body><h1>hiplingo.com</h1><p>Deployment pending.</p></body>
+</html>
+EOF_HIP_BOOT
+
+    sudo chown root:hiplingo-app-deploy \
+      /var/www/hiplingo.com/app/releases/bootstrap/index.html
+
+    cd /var/www/hiplingo.com/app
+    sudo ln -sfn releases/bootstrap current
+
+Validate:
+
+    readlink -f /var/www/nathanbrenton.com/current
+    readlink -f /var/www/hiplingo.com/app/current
+
+Expected targets end in:
+
+    /releases/bootstrap
+
+
+15. PUBLIC SERVER — CONFIGURE NGINX HTTP VHOSTS
+==============================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Nathan vhost:
+
+    sudo tee /etc/nginx/sites-available/nathanbrenton.com >/dev/null <<'EOF_NGINX_NATHAN'
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name nathanbrenton.com www.nathanbrenton.com;
+
+    root /var/www/nathanbrenton.com/current;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+EOF_NGINX_NATHAN
+
+Hiplingo vhost:
+
+    sudo tee /etc/nginx/sites-available/hiplingo.com >/dev/null <<'EOF_NGINX_HIP'
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name hiplingo.com www.hiplingo.com;
+
+    root /var/www/hiplingo.com/app/current;
+    index index.html;
+
+    location = /media {
+        return 301 /media/;
+    }
+
+    location /media/ {
+        alias /var/www/hiplingo.com/published-media/;
+        autoindex off;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+EOF_NGINX_HIP
+
+Enable both and disable Debian's default site:
+
+    sudo ln -sfn /etc/nginx/sites-available/nathanbrenton.com \
+      /etc/nginx/sites-enabled/nathanbrenton.com
+
+    sudo ln -sfn /etc/nginx/sites-available/hiplingo.com \
+      /etc/nginx/sites-enabled/hiplingo.com
+
+    sudo rm -f /etc/nginx/sites-enabled/default
+
+Validate BEFORE reload:
+
+    sudo nginx -t
+
+Enable/reload nginx:
+
+    sudo systemctl enable nginx
+    sudo systemctl reload nginx
+
+Validate service:
+
+    systemctl is-active nginx
+    systemctl is-enabled nginx
+
+Validate vhosts locally on the server without relying on DNS yet:
+
+    curl -I -H 'Host: nathanbrenton.com' http://127.0.0.1/
+    curl -I -H 'Host: hiplingo.com' http://127.0.0.1/
+    curl -I -H 'Host: hiplingo.com' http://127.0.0.1/media
+
+Expected:
+
+    Nathan /      -> HTTP success
+    Hiplingo /    -> HTTP success
+    Hiplingo /media -> 301 to /media/
+
+
+16. DNS PROVIDER — POINT BOTH DOMAINS TO THE SERVER
+==================================================
+
+Run at: DNS PROVIDER CONTROL PANEL
+No shell command changes DNS unless your provider has its own CLI/API.
+
+For nathanbrenton.com:
+
+    A     @      <PUBLIC_IPV4>     TTL 1 hour
+    A     www    <PUBLIC_IPV4>     TTL 1 hour
+
+For hiplingo.com:
+
+    A     @      <PUBLIC_IPV4>     TTL 1 hour
+    A     www    <PUBLIC_IPV4>     TTL 1 hour
+
+Remove conflicting www CNAME records.
+Do not create AAAA records unless this host's IPv6 firewall/routing is also
+explicitly configured and validated.
+
+
+17. LOCAL CLIENT — VALIDATE AUTHORITATIVE DNS
+=============================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE because public IPs appear.
+
+    dig +short A nathanbrenton.com
+    dig +short A www.nathanbrenton.com
+    dig +short A hiplingo.com
+    dig +short A www.hiplingo.com
+
+Confirm all four resolve to SERVER_IP.
+
+Confirm no unexpected IPv6 records:
+
+    dig +short AAAA nathanbrenton.com
+    dig +short AAAA www.nathanbrenton.com
+    dig +short AAAA hiplingo.com
+    dig +short AAAA www.hiplingo.com
+
+Expected at the validated state: no AAAA output.
+
+Do not request certificates until the A records resolve correctly from public
+DNS.
+
+
+18. PUBLIC SERVER — OBTAIN LET'S ENCRYPT CERTIFICATES WITH CERTBOT
+=================================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+Certbot output may show domain names and the account email entered during
+interactive registration. The email is not a credential but may be redacted.
+
+Obtain/configure Nathan certificate first:
+
+    sudo certbot --nginx --redirect \
+      -d nathanbrenton.com \
+      -d www.nathanbrenton.com
+
+Then Hiplingo:
+
+    sudo certbot --nginx --redirect \
+      -d hiplingo.com \
+      -d www.hiplingo.com
+
+Certbot edits the nginx site files to add the HTTPS listener, certificate/key
+paths, and HTTP-to-HTTPS redirect handling.
+
+Validate nginx after both runs:
+
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+Validate Certbot timer:
+
+    sudo systemctl enable --now certbot.timer
+    systemctl is-enabled certbot.timer
+    systemctl is-active certbot.timer
+
+Validate renewal safely:
+
+    sudo certbot renew --dry-run
+
+Do NOT print /etc/letsencrypt/live/*/privkey.pem.
+
+
+19. LOCAL CLIENT — VALIDATE HTTPS FOR ALL FOUR HOSTNAMES
+=======================================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE.
+
+    curl -I https://nathanbrenton.com/
+    curl -I https://www.nathanbrenton.com/
+    curl -I https://hiplingo.com/
+    curl -I https://www.hiplingo.com/
+
+Expected:
+
+    HTTPS connection succeeds for all four hostnames.
+    Bootstrap content may still be active; real deployments remain pending.
+
+Also verify the Hiplingo media prefix redirect:
+
+    curl -I https://hiplingo.com/media
+
+Expected:
+
+    301 -> /media/
+
+An empty /media/ directory is correct until metadata-editor's sanitized
+published-media package is intentionally deployed.
+
+
+20. PUBLIC SERVER — CUSTOMIZE THE STATIC MOTD
+=============================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Write the validated static production-server MOTD:
+
+    sudo tee /etc/motd >/dev/null <<'EOF_MOTD'
+============================================================
+ web-prod-01 — PRODUCTION WEB SERVER
+ Debian 13 (trixie) · nginx
+
+ nathanbrenton.com
+ hiplingo.com
+============================================================
+EOF_MOTD
+
+Debian's PAM stack may also display /run/motd.dynamic, which produced a second
+kernel banner on this host. Disable only that dynamic PAM MOTD invocation while
+leaving the static /etc/motd path available.
+
+Back up PAM config OUTSIDE any SSH include directory:
+
+    sudo cp -a /etc/pam.d/sshd /root/ssh-config-backups/pam-sshd.pre-motd
+
+Comment the /run/motd.dynamic PAM line if it is active:
+
+    sudo sed -i \
+      '/^[[:space:]]*session[[:space:]]\+optional[[:space:]]\+pam_motd\.so[[:space:]]\+motd=\/run\/motd\.dynamic/s/^/# disabled-static-motd: /' \
+      /etc/pam.d/sshd
+
+Inspect only MOTD-related PAM lines:
+
+    grep -n 'pam_motd' /etc/pam.d/sshd
+
+Validate SSH config and reload:
+
+    sudo sshd -t
+    sudo systemctl reload ssh
+
+A fresh SSH login should show the custom static banner once, not the extra
+/run/motd.dynamic kernel banner.
+
+
+21. PUBLIC SERVER — VALIDATE DEPLOYMENT FILESYSTEM OWNERSHIP
+===========================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+    stat -c '%A %a %U:%G %n' \
+      /var/www/nathanbrenton.com \
+      /var/www/nathanbrenton.com/releases \
+      /var/www/hiplingo.com \
+      /var/www/hiplingo.com/app \
+      /var/www/hiplingo.com/app/releases \
+      /var/www/hiplingo.com/published-media
+
+Validated intent:
+
+    /var/www/nathanbrenton.com             root:nathan-deploy          2775
+    /var/www/nathanbrenton.com/releases    root:nathan-deploy          2775
+    /var/www/hiplingo.com                  root:root                   0755
+    /var/www/hiplingo.com/app              root:hiplingo-app-deploy    2775
+    /var/www/hiplingo.com/app/releases     root:hiplingo-app-deploy    2775
+    /var/www/hiplingo.com/published-media  root:hiplingo-media-deploy  2775
+
+Confirm nginx has no deployment-group membership:
+
+    id www-data
+
+www-data should not be a member of nathan-deploy, hiplingo-app-deploy, or
+hiplingo-media-deploy.
+
+
+22. LOCAL CLIENT — PROVE EACH DEPLOY USER CAN WRITE ONLY ITS OWN TREE
+====================================================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE.
+
+Nathan — allowed write:
+
+    ssh -i "$DEPLOY_NATHAN_KEY" deploy-nathan@"$SERVER_IP" \
+      'touch /var/www/nathanbrenton.com/releases/.boundary-test && \
+       rm /var/www/nathanbrenton.com/releases/.boundary-test && \
+       echo deploy-nathan-own-boundary=PASS'
+
+Nathan — forbidden cross-write:
+
+    if ssh -i "$DEPLOY_NATHAN_KEY" deploy-nathan@"$SERVER_IP" \
+      'touch /var/www/hiplingo.com/app/releases/.must-not-write' 2>/dev/null; then
+        echo 'ERROR: deploy-nathan crossed into Hiplingo app boundary'
+        ssh -i "$ADMIN_KEY" n8@"$SERVER_IP" \
+          'sudo rm -f /var/www/hiplingo.com/app/releases/.must-not-write'
+        exit 1
+    else
+        echo 'deploy-nathan-cross-boundary=PASS'
+    fi
+
+Hiplingo frontend — allowed write:
+
+    ssh -i "$DEPLOY_HIPLINGO_APP_KEY" deploy-hiplingo-app@"$SERVER_IP" \
+      'touch /var/www/hiplingo.com/app/releases/.boundary-test && \
+       rm /var/www/hiplingo.com/app/releases/.boundary-test && \
+       echo deploy-hiplingo-app-own-boundary=PASS'
+
+Hiplingo frontend — forbidden media write:
+
+    if ssh -i "$DEPLOY_HIPLINGO_APP_KEY" deploy-hiplingo-app@"$SERVER_IP" \
+      'touch /var/www/hiplingo.com/published-media/.must-not-write' 2>/dev/null; then
+        echo 'ERROR: Hiplingo app deploy user crossed into media boundary'
+        ssh -i "$ADMIN_KEY" n8@"$SERVER_IP" \
+          'sudo rm -f /var/www/hiplingo.com/published-media/.must-not-write'
+        exit 1
+    else
+        echo 'deploy-hiplingo-app-cross-boundary=PASS'
+    fi
+
+Hiplingo media — allowed write:
+
+    ssh -i "$DEPLOY_HIPLINGO_MEDIA_KEY" deploy-hiplingo-media@"$SERVER_IP" \
+      'touch /var/www/hiplingo.com/published-media/.boundary-test && \
+       rm /var/www/hiplingo.com/published-media/.boundary-test && \
+       echo deploy-hiplingo-media-own-boundary=PASS'
+
+Hiplingo media — forbidden frontend write:
+
+    if ssh -i "$DEPLOY_HIPLINGO_MEDIA_KEY" deploy-hiplingo-media@"$SERVER_IP" \
+      'touch /var/www/hiplingo.com/app/releases/.must-not-write' 2>/dev/null; then
+        echo 'ERROR: Hiplingo media deploy user crossed into app boundary'
+        ssh -i "$ADMIN_KEY" n8@"$SERVER_IP" \
+          'sudo rm -f /var/www/hiplingo.com/app/releases/.must-not-write'
+        exit 1
+    else
+        echo 'deploy-hiplingo-media-cross-boundary=PASS'
+    fi
+
+This validates filesystem write boundaries independently of future deploy
+scripts.
+
+
+23. PUBLIC SERVER — FINAL SERVER-READINESS AUDIT
+================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE; PRIVACY-SENSITIVE only if real attacker IPs appear in
+Fail2ban output.
+
+    echo
+    echo '===== PRODUCTION SERVER READINESS ====='
+
+    printf 'ssh='; systemctl is-active ssh
+    printf 'nginx='; systemctl is-active nginx
+    printf 'nftables='; systemctl is-active nftables
+    printf 'nftables_enabled='; systemctl is-enabled nftables
+    printf 'fail2ban='; systemctl is-active fail2ban
+    printf 'fail2ban_enabled='; systemctl is-enabled fail2ban
+    printf 'certbot_timer='; systemctl is-enabled certbot.timer
+    printf 'apt_daily='; systemctl is-enabled apt-daily.timer
+    printf 'apt_daily_upgrade='; systemctl is-enabled apt-daily-upgrade.timer
+
+    if dpkg-query -W ufw >/dev/null 2>&1; then
+        echo 'ufw_package=PRESENT-ERROR'
+    else
+        echo 'ufw_package=absent'
+    fi
+
+    echo
+    echo '----- FIREWALL TABLES -----'
+    sudo nft list tables
+
+    echo
+    echo '----- NGINX CONFIG -----'
+    sudo nginx -t
+
+    echo
+    echo '----- SSH CONFIG -----'
+    sudo sshd -t && echo 'sshd_config=ok'
+    sudo sshd -T | grep -E \
+    '^(maxauthtries|permitrootlogin|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|x11forwarding|allowusers) '
+
+    echo
+    echo '----- FAIL2BAN -----'
+    sudo fail2ban-client ping
+    sudo fail2ban-client status sshd
+
+    echo
+    echo '----- AUTOMATIC REBOOT POLICY -----'
+    apt-config dump | grep -E '^Unattended-Upgrade::Automatic-Reboot '
+
+    echo
+    echo '----- PENDING PACKAGE COUNT -----'
+    apt list --upgradable 2>/dev/null | tail -n +2 | wc -l
+
+    echo
+    echo '----- ACTIVE RELEASE POINTERS -----'
+    printf 'nathan_current='; readlink /var/www/nathanbrenton.com/current
+    printf 'hiplingo_current='; readlink /var/www/hiplingo.com/app/current
+
+    echo
+    echo '===== END READINESS ====='
+
+At the initial rebuilt state, the current pointers may still point to
+releases/bootstrap. That is expected until the real applications are deployed.
+
+
+24. LOCAL CLIENT — FINAL PUBLIC HTTPS CHECK
+===========================================
+
+Run on: LOCAL CLIENT
+Output: SAFE TO PASTE.
+
+    for url in \
+      https://nathanbrenton.com/ \
+      https://www.nathanbrenton.com/ \
+      https://hiplingo.com/ \
+      https://www.hiplingo.com/
+    do
+      printf '%-40s ' "$url"
+      curl -L -sS -o /dev/null -w '%{http_code}\n' "$url"
+    done
+
+Expected:
+
+    200 for all four hostnames once Certbot/nginx are correct.
+
+Remember: a 200 from bootstrap pages confirms server/TLS routing only. It does
+NOT mean the real Nathan/Hiplingo application content has been deployed.
+
+
+25. DO NOT PERFORM YET — REAL CONTENT DEPLOYMENTS
+=================================================
+
+The rebuild is complete at this point.
+
+Keep the three pending production operations separate:
+
+A. nathanbrenton.com
+
+   Canonical local source:
+     ~/Desktop/websites/nathanbrenton.com/
+
+   Future destination model:
+     /var/www/nathanbrenton.com/releases/<timestamp>/
+     current -> releases/<timestamp>/
+
+   Deployment identity:
+     deploy-nathan
+
+B. Hiplingo frontend
+
+   Canonical local source:
+     ~/Desktop/record-label/audio-player/
+
+   Future build source:
+     audio-player/dist/
+
+   Future destination model:
+     /var/www/hiplingo.com/app/releases/<timestamp>/
+     current -> releases/<timestamp>/
+
+   Deployment identity:
+     deploy-hiplingo-app
+
+C. Metadata-editor sanitized public media
+
+   Canonical private library:
+     ~/Desktop/record-label/media-library/
+     NEVER PUBLIC
+
+   Sanitized local public output:
+     ~/Desktop/record-label/published-media/
+
+   Future persistent production destination:
+     /var/www/hiplingo.com/published-media/
+
+   Public URL prefix:
+     https://hiplingo.com/media/
+
+   Deployment identity:
+     deploy-hiplingo-media
+
+Frontend release deployment/rollback must never erase or roll back
+published-media. The two lifecycles are intentionally decoupled.
+
+
+REBUILD COMPLETE — TARGET STATE
+===============================
+
+A correctly rebuilt server now has:
+
+  [OK] Debian 13 updated
+  [OK] nginx installed/enabled
+  [OK] n8 key-based admin access
+  [OK] root SSH disabled
+  [OK] password/keyboard-interactive SSH disabled
+  [OK] SSH login allowlist
+  [OK] MaxAuthTries 3
+  [OK] X11 forwarding disabled
+  [OK] deploy-user authorized keys restricted
+  [OK] UFW absent
+  [OK] nftables default-drop firewall
+  [OK] TCP 22/80/443 allowed
+  [OK] Fail2ban sshd jail using journald + nftables
+  [OK] Fail2ban nftables enforcement synthetic-tested
+  [OK] unattended-upgrades active
+  [OK] unattended automatic reboot explicitly disabled
+  [OK] separate deployment users/groups
+  [OK] SGID deployment directories
+  [OK] Nathan release/current architecture
+  [OK] Hiplingo frontend release/current architecture
+  [OK] Hiplingo persistent published-media architecture
+  [OK] nginx /media/ alias to published-media
+  [OK] DNS A records for root + www on both domains
+  [OK] no conflicting www CNAME / no unintended AAAA
+  [OK] Let's Encrypt HTTPS for both domains + www
+  [OK] Certbot renewal timer enabled
+  [OK] custom production MOTD
+  [OK] deploy cross-write boundaries validated
+
+Still pending by design:
+
+  [PENDING] real nathanbrenton.com release
+  [PENDING] real hiplingo.com frontend release
+  [PENDING] metadata-editor published-media production sync
+
