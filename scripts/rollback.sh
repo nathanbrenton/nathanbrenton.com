@@ -3,6 +3,7 @@ set -euo pipefail
 
 REMOTE="nathan-prod"
 REMOTE_ROOT="/var/www/nathanbrenton.com"
+AUTO_YES=false
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -13,11 +14,41 @@ confirm() {
   local prompt="$1"
   local reply
 
+  if [[ "$AUTO_YES" == true ]]; then
+    printf '%s [auto-yes]\n' "$prompt"
+    return 0
+  fi
+
   printf '%s [y/N] ' "$prompt"
   read -r reply
 
   [[ "$reply" == "y" || "$reply" == "Y" ]]
 }
+
+usage() {
+  cat <<'EOF_USAGE'
+Usage: rollback.sh [-y|--yes]
+
+  -y, --yes   Automatically confirm rollback and failed-release cleanup.
+  -h, --help  Show this help.
+EOF_USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -y|--yes)
+      AUTO_YES=true
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+  shift
+done
 
 for cmd in ssh curl; do
   command -v "$cmd" >/dev/null 2>&1 ||

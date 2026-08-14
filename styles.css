@@ -1277,3 +1277,12 @@ a[data-link="instagram"] { order: 4; }
   }
 }
 
+
+/* iOS portrait fix:
+   CSS masking causes physical-iPhone scroll hitching. */
+@media (max-width: 699px) and (orientation: portrait) {
+  .profile-card::before {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
