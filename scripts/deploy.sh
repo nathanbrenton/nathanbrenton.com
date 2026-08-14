@@ -31,10 +31,22 @@ confirm() {
   [[ "$reply" == "y" || "$reply" == "Y" ]]
 }
 
-for cmd in ssh rsync curl shasum; do
+for cmd in ssh rsync curl; do
   command -v "$cmd" >/dev/null 2>&1 ||
     fail "required command not found: $cmd"
 done
+
+if command -v shasum >/dev/null 2>&1; then
+  sha256_local() {
+    shasum -a 256
+  }
+elif command -v sha256sum >/dev/null 2>&1; then
+  sha256_local() {
+    sha256sum
+  }
+else
+  fail "neither shasum nor sha256sum is available"
+fi
 
 cd "$LOCAL_ROOT"
 
@@ -260,13 +272,13 @@ done
 
 
 LOCAL_INDEX_HASH="$(
-  shasum -a 256 index.html |
+  sha256_local < index.html |
     awk '{print $1}'
 )"
 
 LIVE_INDEX_HASH="$(
   curl -fsS https://nathanbrenton.com/index.html |
-    shasum -a 256 |
+    sha256_local |
     awk '{print $1}'
 )"
 
