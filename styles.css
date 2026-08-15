@@ -1218,9 +1218,9 @@ a[data-link="instagram"] { order: 4; }
     inset: -12% 0;
     background-image: url('./assets/banner-desktop.webp');
     background-size: cover;
-    background-position: center 12%;
+    background-position: center calc(12% + var(--parallax-y, 0px));
     background-repeat: no-repeat;
-    transform: translate3d(0, var(--parallax-y, 0px), 0) scale(1.035);
+    transform: scale(1.035);
 
     -webkit-mask-image: linear-gradient(
       180deg,
@@ -1282,6 +1282,8 @@ a[data-link="instagram"] { order: 4; }
    CSS masking causes physical-iPhone scroll hitching. */
 @media (max-width: 699px) and (orientation: portrait) {
   .profile-card::before {
+    background-image: url('./assets/parallax/hero-parallax-mobile.webp');
+    background-position: center 32%;
     -webkit-mask-image: none;
     mask-image: none;
   }
@@ -1305,6 +1307,49 @@ a[data-link="instagram"] { order: 4; }
     left: 0;
     width: 100vw;
     height: 100lvh;
-    transform: none;
+
+    /*
+     * Keep the browser-chrome-stable 100lvh box, but restore subtle
+     * parallax. The fixed 1.12 overscan provides enough edge runway
+     * for the full-document portrait travel without exposing an edge.
+     */
+    transform: translate3d(0, var(--page-parallax-y, 0px), 0) scale(1.12);
+    transform-origin: center;
+    will-change: transform;
+  }
+}
+
+/* Mobile landscape: size the fixed page background from the stable large
+   viewport so browser-chrome resizing does not change the background crop. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 950px) {
+  body::before {
+    inset: auto;
+    top: -18lvh;
+    left: -5lvw;
+    width: 110lvw;
+    height: 136lvh;
+    transform: translate3d(0, var(--page-parallax-y, 0px), 0) scale(1.06);
+  }
+}
+
+
+/* Desktop parallax runway and full-document page-water motion.
+   Keep this separate from the tuned mobile portrait/landscape treatments. */
+@media (min-width: 700px) and (min-height: 601px) {
+  body::before {
+    inset: -8vh -3vw;
+    transform:
+      translate3d(0, var(--page-parallax-y, 0px), 0)
+      scale(1.035);
+    will-change: transform;
+  }
+
+  /*
+   * Extra vertical image runway for the desktop hero.
+   * The existing desktop background image/crop rules still win;
+   * this only enlarges the movable pseudo-element.
+   */
+  .profile-card .banner::before {
+    inset: -18% 0;
   }
 }

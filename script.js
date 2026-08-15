@@ -72,26 +72,112 @@
       const mobileDepthMultiplier = mobileParallax.matches ? 1.38 : 1;
       const travelLimit = mobileParallax.matches ? 50 : 34;
 
-      if (mobileParallax.matches && !mobilePortraitParallax.matches) {
+      if (mobileParallax.matches) {
+        /*
+         * The page-water layer uses stable viewport geometry in CSS.
+         * Portrait gets a slightly gentler depth than landscape.
+         */
         const pageTravelLimit = 40;
-        const pageDepth = 0.045;
-        const pageOffset = Math.max(
-          -pageTravelLimit,
-          Math.min(pageTravelLimit, -window.scrollY * pageDepth),
-        );
+
+        /*
+         * Portrait page water travels continuously across the full document
+         * instead of reaching a pixel clamp early. Landscape keeps its
+         * existing depth-based behavior.
+         */
+        let pageOffset;
+
+        if (mobilePortraitParallax.matches) {
+          const maxScroll = Math.max(
+            1,
+            document.documentElement.scrollHeight - window.innerHeight,
+          );
+          const scrollProgress = Math.max(
+            0,
+            Math.min(1, window.scrollY / maxScroll),
+          );
+
+          const portraitPageTravelLimit = 48;
+          pageOffset = -portraitPageTravelLimit * scrollProgress;
+        } else {
+          /*
+           * Landscape page water also travels across the full document
+           * instead of reaching its old +/-40px clamp early.
+           */
+          const maxScroll = Math.max(
+            1,
+            document.documentElement.scrollHeight - window.innerHeight,
+          );
+          const scrollProgress = Math.max(
+            0,
+            Math.min(1, window.scrollY / maxScroll),
+          );
+          const landscapePageTravelLimit = 60;
+
+          pageOffset = -landscapePageTravelLimit * scrollProgress;
+        }
         document.documentElement.style.setProperty(
           '--page-parallax-y',
           `${pageOffset.toFixed(2)}px`,
         );
       } else {
-        document.documentElement.style.setProperty('--page-parallax-y', '0px');
+        /*
+         * Desktop page water:
+         * travel continuously from the top of the document to the bottom,
+         * rather than remaining fixed at --page-parallax-y: 0.
+         */
+        const maxScroll = Math.max(
+          1,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+        const scrollProgress = Math.max(
+          0,
+          Math.min(1, window.scrollY / maxScroll),
+        );
+        const desktopPageTravelLimit = 44;
+        const pageOffset = -desktopPageTravelLimit * scrollProgress;
+
+        document.documentElement.style.setProperty(
+          '--page-parallax-y',
+          `${pageOffset.toFixed(2)}px`,
+        );
       }
 
       parallaxItems.forEach((item) => {
         const rect = item.getBoundingClientRect();
-        if (rect.bottom < -80 || rect.top > window.innerHeight + 80) return;
+        const isLongLivedHeroItem =
+          item.classList.contains('banner') &&
+          (mobilePortraitParallax.matches || !mobileParallax.matches);
 
-        if (mobilePortraitParallax.matches && item.classList.contains('banner')) {
+        if (
+          !isLongLivedHeroItem &&
+          (rect.bottom < -80 || rect.top > window.innerHeight + 80)
+        ) return;
+
+        if (!mobileParallax.matches && item.classList.contains('banner')) {
+          const heroCard = item.closest('.profile-card');
+          const heroBottomDocument = heroCard
+            ? heroCard.getBoundingClientRect().bottom + window.scrollY
+            : rect.bottom + window.scrollY;
+
+          const heroProgress = Math.max(
+            0,
+            Math.min(
+              1,
+              window.scrollY / Math.max(1, heroBottomDocument),
+            ),
+          );
+
+          /*
+           * Positive travel matches the direction we settled on for
+           * the mobile hero treatments.
+           */
+          const desktopHeroTravelLimit = 48;
+          const heroOffset = desktopHeroTravelLimit * heroProgress;
+
+          item.style.setProperty(
+            '--parallax-y',
+            `${heroOffset.toFixed(2)}px`,
+          );
           return;
         }
 
@@ -104,8 +190,8 @@
            */
           const isPortraitHero = mobilePortraitParallax.matches;
           const heroOffset = isPortraitHero
-            ? Math.max(0, Math.min(132, window.scrollY * 0.52))
-            : Math.max(-92, Math.min(0, -window.scrollY * 0.40));
+            ? Math.max(0, window.scrollY * 0.52)
+            : Math.max(0, Math.min(92, window.scrollY * 0.40));
 
           const heroCard = item.closest('.profile-card');
           if (heroCard) {
@@ -115,6 +201,73 @@
             );
           }
           item.style.setProperty('--parallax-y', `${heroOffset.toFixed(2)}px`);
+          return;
+        }
+
+        /*
+         * Mobile landscape About:
+         * begin moving as the card enters the viewport and continue
+         * continuously until its bottom edge leaves the top of the viewport.
+         * Keep the existing +/-50px visual travel, but spread it across the
+         * card's complete visible lifetime instead of hitting a clamp early.
+         */
+        if (
+          mobileParallax.matches &&
+          !mobilePortraitParallax.matches &&
+          item.classList.contains('parallax-bokeh-trail')
+        ) {
+          const visibleJourney = Math.max(
+            0,
+            Math.min(
+              1,
+              (window.innerHeight - rect.top) /
+                (window.innerHeight + rect.height),
+            ),
+          );
+          const aboutTravelLimit = 50;
+          const aboutOffset =
+            -aboutTravelLimit + visibleJourney * aboutTravelLimit * 2;
+
+          item.style.setProperty(
+            '--parallax-y',
+            `${aboutOffset.toFixed(2)}px`,
+          );
+          return;
+        }
+
+        if (
+          !mobileParallax.matches &&
+          item.classList.contains('parallax-card')
+        ) {
+          const visibleJourney = Math.max(
+            0,
+            Math.min(
+              1,
+              (window.innerHeight - rect.top) /
+                (window.innerHeight + rect.height),
+            ),
+          );
+
+          let desktopCardTravelLimit = 34;
+
+          if (item.classList.contains('parallax-bokeh-trail')) {
+            // About: strongest desktop card treatment.
+            desktopCardTravelLimit = 40;
+          } else if (item.classList.contains('parallax-water-bokeh')) {
+            // Skills + Education/Certifications.
+            desktopCardTravelLimit = 36;
+          } else if (item.classList.contains('parallax-spiral')) {
+            desktopCardTravelLimit = 32;
+          }
+
+          const offset =
+            -desktopCardTravelLimit +
+            visibleJourney * desktopCardTravelLimit * 2;
+
+          item.style.setProperty(
+            '--parallax-y',
+            `${offset.toFixed(2)}px`,
+          );
           return;
         }
 
