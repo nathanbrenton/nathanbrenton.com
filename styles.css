@@ -382,7 +382,7 @@ h3 { margin-bottom: 4px; font-size: 1.02rem; }
 }
 
 .parallax-water-bokeh::before {
-  background-image: url('./assets/parallax/water-bokeh-mobile.webp');
+  background-image: url('./assets/parallax/water-parallax-mobile.webp');
   background-position: center 50%;
 }
 
@@ -1284,5 +1284,14 @@ a[data-link="instagram"] { order: 4; }
   .profile-card::before {
     -webkit-mask-image: none;
     mask-image: none;
+  }
+}
+
+/* Tall stitched water master already provides genuine vertical overscan,
+   so avoid the generic extra zoom used by smaller parallax assets. */
+@media (max-width: 699px) and (orientation: portrait) {
+  .parallax-water-bokeh::before {
+    inset: -15% 0;
+    transform: translate3d(0, var(--parallax-y, 0px), 0);
   }
 }
