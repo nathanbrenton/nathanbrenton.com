@@ -15,6 +15,7 @@ RSYNC_EXCLUDES=(
   --exclude='deploy/'
   --exclude='docs/'
   --exclude='scripts/'
+  --exclude='source-assets/'
 )
 
 fail() {
