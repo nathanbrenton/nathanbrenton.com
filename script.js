@@ -63,7 +63,7 @@
     '(max-width: 699px) and (orientation: portrait)',
   );
 
-  if (parallaxItems.length && !reduceMotion.matches && !mobilePortraitParallax.matches) {
+  if (parallaxItems.length && !reduceMotion.matches) {
     let framePending = false;
 
     const updateParallax = () => {
@@ -72,9 +72,9 @@
       const mobileDepthMultiplier = mobileParallax.matches ? 1.38 : 1;
       const travelLimit = mobileParallax.matches ? 50 : 34;
 
-      if (mobileParallax.matches) {
-        const pageTravelLimit = mobilePortraitParallax.matches ? 68 : 40;
-        const pageDepth = mobilePortraitParallax.matches ? 0.07 : 0.045;
+      if (mobileParallax.matches && !mobilePortraitParallax.matches) {
+        const pageTravelLimit = 40;
+        const pageDepth = 0.045;
         const pageOffset = Math.max(
           -pageTravelLimit,
           Math.min(pageTravelLimit, -window.scrollY * pageDepth),
@@ -90,6 +90,10 @@
       parallaxItems.forEach((item) => {
         const rect = item.getBoundingClientRect();
         if (rect.bottom < -80 || rect.top > window.innerHeight + 80) return;
+
+        if (mobilePortraitParallax.matches && item.classList.contains('banner')) {
+          return;
+        }
 
         if (mobileParallax.matches && item.classList.contains('banner')) {
           /*
