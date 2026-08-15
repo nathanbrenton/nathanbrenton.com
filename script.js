@@ -121,9 +121,15 @@
         const strength =
           Number.parseFloat(item.dataset.parallaxStrength || '0.08') * mobileDepthMultiplier;
         const elementCenter = rect.top + rect.height / 2;
+        const itemTravelLimit =
+          mobilePortraitParallax.matches &&
+          item.classList.contains('parallax-bokeh-trail')
+            ? 90
+            : travelLimit;
+
         const offset = Math.max(
-          -travelLimit,
-          Math.min(travelLimit, -(elementCenter - viewportCenter) * strength),
+          -itemTravelLimit,
+          Math.min(itemTravelLimit, -(elementCenter - viewportCenter) * strength),
         );
         item.style.setProperty('--parallax-y', `${offset.toFixed(2)}px`);
       });
