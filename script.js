@@ -121,11 +121,20 @@
         const strength =
           Number.parseFloat(item.dataset.parallaxStrength || '0.08') * mobileDepthMultiplier;
         const elementCenter = rect.top + rect.height / 2;
-        const itemTravelLimit =
-          mobilePortraitParallax.matches &&
-          item.classList.contains('parallax-bokeh-trail')
-            ? 90
-            : travelLimit;
+        let itemTravelLimit = travelLimit;
+
+        if (mobileParallax.matches) {
+          if (item.classList.contains('parallax-water-bokeh')) {
+            itemTravelLimit = 130;
+          } else if (item.classList.contains('parallax-spiral')) {
+            itemTravelLimit = 100;
+          } else if (
+            mobilePortraitParallax.matches &&
+            item.classList.contains('parallax-bokeh-trail')
+          ) {
+            itemTravelLimit = 90;
+          }
+        }
 
         const offset = Math.max(
           -itemTravelLimit,

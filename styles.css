@@ -382,7 +382,7 @@ h3 { margin-bottom: 4px; font-size: 1.02rem; }
 }
 
 .parallax-water-bokeh::before {
-  background-image: url('./assets/parallax/water-parallax-mobile.webp');
+  background-image: url('./assets/parallax/skills-parallax-mobile.webp');
   background-position: center 50%;
 }
 
@@ -1293,5 +1293,18 @@ a[data-link="instagram"] { order: 4; }
   .parallax-water-bokeh::before {
     inset: -15% 0;
     transform: translate3d(0, var(--parallax-y, 0px), 0);
+  }
+}
+
+/* Mobile portrait: keep the fixed page background on a stable viewport
+   so browser-chrome resizing does not change the background crop. */
+@media (max-width: 699px) and (orientation: portrait) {
+  body::before {
+    inset: auto;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100lvh;
+    transform: none;
   }
 }
