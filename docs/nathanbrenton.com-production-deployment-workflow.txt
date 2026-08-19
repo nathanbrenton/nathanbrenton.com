@@ -55,6 +55,7 @@ Files/directories that must NOT be published:
     .gitkeep
     README.md
     deploy/
+    docs/
 
 The public deployment includes the site files, assets, and public resume, e.g.:
 
@@ -168,6 +169,7 @@ Output contains public filenames, paths, timestamps, and rsync indicators.
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
+      --exclude='docs/' \
       --link-dest="$LINK_DEST" \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
@@ -187,6 +189,7 @@ The dry run MUST NOT include:
 
     README.md
     deploy/
+    docs/
     .git/
     .DS_Store
     .gitkeep
@@ -216,6 +219,7 @@ This uploads the new release but does NOT change the live site.
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
+      --exclude='docs/' \
       --link-dest="$LINK_DEST" \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
@@ -298,7 +302,7 @@ SAFE TO PASTE: YES
 
 SAFE TO PASTE: YES
 
-    ssh "$REMOTE" "test ! -e '$ROOT/releases/$RELEASE/README.md' && test ! -e '$ROOT/releases/$RELEASE/deploy' && test ! -e '$ROOT/releases/$RELEASE/.git' && echo 'forbidden_files=absent'"
+    ssh "$REMOTE" "test ! -e '$ROOT/releases/$RELEASE/README.md' && test ! -e '$ROOT/releases/$RELEASE/deploy' && test ! -e '$ROOT/releases/$RELEASE/docs' && test ! -e '$ROOT/releases/$RELEASE/.git' && echo 'forbidden_files=absent'"
 
 Expected:
 
@@ -346,6 +350,7 @@ SAFE TO PASTE: YES
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
+      --exclude='docs/' \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
 
@@ -615,6 +620,7 @@ Do NOT:
     - rsync directly into /var/www/nathanbrenton.com/current
     - publish README.md
     - publish deploy/
+    - publish docs/
     - publish .git/
     - delete the previous known-good release immediately after deployment
     - manually replace files during rollback

@@ -1,11 +1,20 @@
 WEB-PROD-01 PUBLIC SERVER REBUILD WORKFLOW
-Debian 13 (trixie) + nginx
+Debian 13 (trixie) + nginx + Postfix/OpenDKIM/PostSRSd
+Updated: 2026-08-19 (America/Los_Angeles)
 Domains: nathanbrenton.com + hiplingo.com
 
 Purpose
 =======
 This is a command-by-command rebuild procedure for recreating the validated
 public-server foundation from a fresh Debian 13 host.
+
+It includes the public contact-mail forwarding architecture commissioned in
+August 2026 and the nginx hidden-path hardening added after scanner probes for
+/.git/config and /.env.
+
+The August 19, 2026 PT10 mail update adds a canonical operations alias
+(admin@hiplingo.com), a separate admin forwarding map, expanded business role
+addresses, and the "Hiplingo Server Monitor" display identity.
 
 It intentionally avoids abandoned/backtracked approaches. In particular:
 
@@ -14,13 +23,26 @@ It intentionally avoids abandoned/backtracked approaches. In particular:
   - Use journald as Fail2ban's SSH log source; do not add rsyslog just for Fail2ban.
   - Keep nathanbrenton.com, Hiplingo frontend, and Hiplingo published media as
     separate deployment/write boundaries.
+  - Hiplingo media deployment is atomic and uses sibling staging paths under
+    /var/www/hiplingo.com; configure that parent as root:hiplingo-media-deploy
+    mode 3775 (SGID + group-write + sticky bit), not root:root 0755.
+  - Keep nginx/www-data read-only; public media directories are 0755 and files
+    are 0644. Do not add www-data to a deployment group.
   - Do not publish the private metadata-editor media-library.
   - Do not enable automatic reboots after unattended upgrades.
   - Do not store SSH backup files under /etc/ssh/sshd_config.d/ because this
     Debian image includes *.conf* from that directory.
+  - Do not expose SMTP/25 until exact-recipient validation, anti-relay tests,
+    SRS, DNS, and SMTP TLS have all been staged and validated locally.
+  - Do not run a catch-all public mail domain.
+  - Do not expose IMAP, POP3, TCP/587, or TCP/465.
+  - Keep operational/status recipient configuration separate from public
+    business/contact forwarding even if both currently use the same inbox.
+  - Treat SPA fallback HTTP 200 responses for hidden-looking paths as a
+    security smell; explicitly return 404 for hidden paths.
 
 This runbook ends at the CURRENT VALIDATED SERVER-READY STATE.
-The following remain intentionally pending and are NOT performed here:
+The following application/content operations remain intentionally separate:
 
   - real nathanbrenton.com site deployment
   - real hiplingo.com frontend deployment
@@ -41,8 +63,17 @@ hiplingo.com frontend
     current -> releases/<...>/   atomic active-release symlink
 
 hiplingo.com public media
+  /var/www/hiplingo.com/
+    owner root:hiplingo-media-deploy
+    mode 3775                    SGID + group-write + sticky bit
+                                 permits atomic media sibling staging while
+                                 protecting root-owned frontend sibling "app"
+
   /var/www/hiplingo.com/published-media/
                                  persistent, NOT versioned with frontend
+                                 owned by deploy-hiplingo-media after the
+                                 initial atomic deployment
+                                 live directories 0755 / files 0644
                                  nginx public URL prefix: /media/
 
 Private metadata-editor media-library
@@ -58,11 +89,19 @@ Administrative SSH identity
 
 nginx
   www-data remains read-only to deployment trees.
+  Both application sites explicitly return 404 for hidden paths such as
+  /.git/* and /.env instead of allowing the SPA fallback to return index.html.
+  A separate HTTP vhost for web-prod-01.nathanbrenton.com serves only the
+  SMTP certificate ACME webroot and returns 404 elsewhere.
 
 Firewall
   nftables only
-  inbound allow: TCP 22, 80, 443
+  final inbound allow: TCP 22, 25, 80, 443
   default inbound policy: drop
+
+  IMPORTANT commissioning order:
+      bootstrap phase -> 22/80/443 only
+      mail validated  -> add TCP/25 last
 
 SSH
   root login: disabled
@@ -86,16 +125,178 @@ Automatic updates
   Debian unattended-upgrades enabled
   automatic reboot explicitly disabled
 
-DNS
+Public SMTP / forwarding
+  Host identity:
+      web-prod-01.nathanbrenton.com
+      A   -> production IPv4
+      PTR -> web-prod-01.nathanbrenton.com
+
+  Postfix:
+      dual-role MTA
+      - outbound operational mail
+      - narrowly scoped inbound contact forwarding
+      IPv4 only
+      listeners: loopback + production IPv4 on TCP/25
+
+  Accepted recipients:
+      operations/admin:
+          admin@hiplingo.com
+
+      business/public:
+          info@nathanbrenton.com
+          postmaster@nathanbrenton.com
+          nathan@nathanbrenton.com
+          info@hiplingo.com
+          postmaster@hiplingo.com
+          nathan@hiplingo.com
+          licensing@hiplingo.com
+          press@hiplingo.com
+          accounting@hiplingo.com
+
+      valid signed SRS bounce addresses
+
+  Unknown recipients:
+      rejected
+
+  External arbitrary relay:
+      rejected
+
+  Operations/admin forwarding:
+      admin@hiplingo.com
+      -> regexp:/etc/postfix/admin-forwarding.regexp
+      -> independent ADMIN_FORWARD_TARGET
+
+  Business/public forwarding:
+      regexp:/etc/postfix/contact-forwarding.regexp
+      -> independent CONTACT_FORWARD_TARGET
+
+  SRS:
+      PostSRSd 1.10-2.2
+      forward lookup 127.0.0.1:10001
+      reverse lookup 127.0.0.1:10002
+      envelope sender domain srs.nathanbrenton.com
+
+  Operational sender:
+      alerts@ops.nathanbrenton.com
+      visible name: Hiplingo Server Monitor
+      SPF + DKIM + DMARC
+      producers target canonical admin@hiplingo.com
+
+  TLS:
+      dedicated Let's Encrypt certificate for
+      web-prod-01.nathanbrenton.com
+      STARTTLS on SMTP/25
+
+DNS — web
   nathanbrenton.com: A @ and A www -> server IPv4
   hiplingo.com:       A @ and A www -> server IPv4
-  TTL: 1 hour
   no AAAA records unless IPv6 is deliberately configured later
   no conflicting www CNAME records
 
+DNS — mail
+  web-prod-01.nathanbrenton.com A -> server IPv4
+  server IPv4 PTR -> web-prod-01.nathanbrenton.com
+
+  nathanbrenton.com MX 10 web-prod-01.nathanbrenton.com.
+  hiplingo.com      MX 10 web-prod-01.nathanbrenton.com.
+
+  srs.nathanbrenton.com MX 10 web-prod-01.nathanbrenton.com.
+  srs.nathanbrenton.com TXT "v=spf1 ip4:<PUBLIC_IPV4> -all"
+
+  ops.nathanbrenton.com TXT SPF
+  webprod01-202608._domainkey.ops.nathanbrenton.com TXT DKIM
+  _dmarc.ops.nathanbrenton.com TXT DMARC
+
 TLS
   Let's Encrypt / Certbot
-  separate certificates/configuration for each domain + www hostname
+  separate site certificates for each domain + www hostname
+  separate SMTP-host certificate for web-prod-01.nathanbrenton.com
+
+
+Monitoring
+  Monit 5.34.3
+  120-second daemon interval
+  root-only Unix control socket; no TCP/2812
+
+  Immediate alerts:
+      Monit native SMTP -> 127.0.0.1:25 -> Postfix
+      no production EXEC mail helper
+      no Postfix maildrop sandbox exception
+
+  Service checks:
+      nginx, ssh, nftables, fail2ban, postfix, opendkim, postsrsd
+
+  Daily report:
+      /usr/local/sbin/server-health-report
+      systemd timer at 08:00 America/Los_Angeles
+
+
+MAIL-TECHNOLOGY NOTES
+=====================
+
+SRS / SPF
+---------
+Forwarding ordinarily causes SPF trouble because the final receiver sees the
+forwarding VPS, not the original sender's SMTP IP. PostSRSd rewrites the SMTP
+envelope sender to a signed address under srs.nathanbrenton.com. That domain's
+SPF authorizes this VPS, and signed SRS addresses can later be reversed for
+bounces.
+
+SRS changes the envelope/Return-Path identity; it should not rewrite the
+visible From: header or message body.
+
+DKIM / DMARC during forwarding
+------------------------------
+SRS does not make SPF align with the original visible From: domain for DMARC.
+Therefore preserving the original sender's DKIM signature is important.
+Aligned DKIM can continue to satisfy DMARC after forwarding.
+
+Virtual aliases
+---------------
+nathanbrenton.com and hiplingo.com are Postfix virtual alias domains, not local
+mailbox domains. Only explicitly mapped recipients are accepted. The SRS
+subdomain is also a virtual alias domain, with dynamic reverse lookup through
+PostSRSd.
+
+Monitoring mail transport
+-------------------------
+Production Monit uses its built-in SMTP client:
+
+    set mailserver 127.0.0.1 port 25
+        with timeout 15 seconds
+
+Do not recreate the older experimental server-monitor-alert EXEC bridge or a
+Postfix maildrop ReadWritePaths exception.
+
+The operations/admin producers share one stable internal recipient:
+
+    /etc/server-monitor/config
+        ADMIN_EMAIL=admin@hiplingo.com
+
+    /etc/monit/conf.d/mail-alerts
+        set alert admin@hiplingo.com
+
+The real operations inbox is stored only in the admin Postfix map.
+
+
+Recipient separation
+--------------------
+Two independent real forwarding destinations intentionally exist:
+
+  ADMIN_FORWARD_TARGET
+      right-hand destination in /etc/postfix/admin-forwarding.regexp
+      operations / health / alert mail
+
+  CONTACT_FORWARD_TARGET
+      right-hand destination in /etc/postfix/contact-forwarding.regexp
+      public business/contact forwarding
+
+They may currently contain the same literal inbox. Do not deduplicate them
+into one setting; changing either destination later must not affect the other.
+
+ADMIN_EMAIL is deliberately not a real destination setting. It remains:
+
+    ADMIN_EMAIL=admin@hiplingo.com
 
 
 OUTPUT-SAFETY LEGEND
@@ -106,12 +307,12 @@ SAFE TO PASTE
 
 SAFE TO PASTE; PRIVACY-SENSITIVE
   Output may contain the public server IP, client public IP, SSH public-key
-  fingerprint, account names, or certificate/domain information. These are not
-  authentication secrets, but may be redacted for privacy.
+  fingerprint, account names, certificate/domain information, or public mail
+  aliases. These are not authentication secrets, but may be redacted.
 
 DO NOT PASTE
-  Private keys, passwords, API tokens, recovery codes, or the contents of any
-  private-key file.
+  Private keys, passwords, API tokens, recovery codes, PostSRSd secret,
+  private DKIM key, SMTP TLS private key, or Monit control password.
 
 Never run: cat ~/.ssh/<private-key>
 Never paste a sudo password; normal sudo prompts do not echo it.
@@ -184,7 +385,9 @@ Install only the packages needed for the validated stack:
       unattended-upgrades \
       rsync \
       curl \
-      ca-certificates
+      ca-certificates \
+      dnsutils \
+      openssl
 
 Set/confirm hostname:
 
@@ -448,13 +651,17 @@ Provider-created accounts not present in AllowUsers cannot SSH even if their
 local shell remains installed.
 
 
-9. PUBLIC SERVER — CONFIGURE NFTABLES AS THE ONLY HOST FIREWALL
-==============================================================
+9. PUBLIC SERVER — CONFIGURE NFTABLES BOOTSTRAP FIREWALL
+===========================================================
 
 Run on: PUBLIC SERVER as n8
 Output: SAFE TO PASTE.
 
 Keep a known-good SSH session open while applying firewall changes.
+
+At this EARLY rebuild stage, intentionally permit only 22/80/443.
+Do NOT open TCP/25 yet. The mail commissioning sections later add TCP/25 only
+after Postfix recipient policy, SRS, TLS, DNS, and anti-relay validation pass.
 
     sudo tee /etc/nftables.conf >/dev/null <<'EOF_NFT'
 #!/usr/sbin/nft -f
@@ -505,13 +712,17 @@ Expected base table:
 
     table inet filter
 
-Expected inbound policy:
+Expected bootstrap inbound policy:
 
     established/related accepted
     loopback accepted
     ICMP/ICMPv6 accepted
     TCP 22/80/443 accepted
+    TCP/25 NOT YET accepted
     everything else inbound dropped
+
+Final production state after mail commissioning:
+    TCP 22/25/80/443 accepted.
 
 
 10. LOCAL CLIENT — PROVE SSH AFTER FIREWALL ACTIVATION
@@ -670,6 +881,11 @@ justify them.
 Run on: PUBLIC SERVER as n8
 Output: SAFE TO PASTE.
 
+Nathan's frontend and Hiplingo's frontend use ordinary SGID deployment trees.
+Hiplingo public media is different because metadata-editor performs an ATOMIC
+sibling-stage-and-swap deployment. The media deploy identity must therefore
+create paths beside published-media, not merely write inside it.
+
 Create Nathan's independent release tree:
 
     sudo install -d -m 2775 -o root -g nathan-deploy \
@@ -678,10 +894,27 @@ Create Nathan's independent release tree:
     sudo install -d -m 2775 -o root -g nathan-deploy \
       /var/www/nathanbrenton.com/releases
 
-Create Hiplingo's independent frontend tree:
+Create the Hiplingo parent with the media deployment group:
 
-    sudo install -d -m 755 -o root -g root \
+    sudo install -d -m 3775 -o root -g hiplingo-media-deploy \
       /var/www/hiplingo.com
+
+Mode 3775 means:
+
+    2xxx  SGID
+          new sibling entries inherit hiplingo-media-deploy
+
+    1xxx  sticky bit
+          deploy-hiplingo-media may manage entries it owns, but cannot
+          rename/remove root-owned sibling entries such as "app"
+
+    0775  the media deployment group may create atomic sibling staging paths
+
+This is intentionally narrower than chmod 777. Do not remove the sticky bit:
+without it, group-write on the parent would unnecessarily weaken the frontend
+boundary.
+
+Create Hiplingo's independent frontend tree:
 
     sudo install -d -m 2775 -o root -g hiplingo-app-deploy \
       /var/www/hiplingo.com/app
@@ -689,16 +922,63 @@ Create Hiplingo's independent frontend tree:
     sudo install -d -m 2775 -o root -g hiplingo-app-deploy \
       /var/www/hiplingo.com/app/releases
 
-Create Hiplingo's persistent media tree, separate from frontend releases:
+Create the INITIAL empty media tree so deploy-hiplingo-media owns the object
+that the atomic deploy later needs to rename:
 
-    sudo install -d -m 2775 -o root -g hiplingo-media-deploy \
+    sudo install -d -m 2775 \
+      -o deploy-hiplingo-media \
+      -g hiplingo-media-deploy \
       /var/www/hiplingo.com/published-media
 
-SGID mode 2775 ensures newly created children inherit the deployment group.
-Other users, including nginx/www-data, receive read/execute but not write.
+IMPORTANT:
+    The first successful atomic rsync deployment replaces the initial empty
+    directory with its staged tree. Current deployment tooling explicitly
+    normalizes public directories to 0755 and files to 0644, so the normal
+    post-deployment live root is expected to become:
+
+        deploy-hiplingo-media:hiplingo-media-deploy 0755
+        /var/www/hiplingo.com/published-media
+
+    That is correct. The deploy identity owns the live tree and obtains its
+    rename/create authority from the 3775 parent.
+
+Why published-media must initially be owned by deploy-hiplingo-media:
+    On a sticky parent, a group member cannot rename a root-owned child.
+    Creating the initial published-media directory as root would therefore
+    block the first atomic swap even though the media group can write to the
+    parent.
+
+Public/private mode boundary:
+    private metadata-editor Library files may intentionally be 0600;
+    sanitized published-media files must be web-readable 0644.
+
+    Current metadata-editor defense in depth:
+        public package writer -> copied public assets chmod 0644
+        deployment rsync      -> directories 0755, files 0644
 
 Do NOT place metadata-editor's private media-library here.
 Only sanitized published-media output belongs in published-media/.
+
+Validate:
+
+    stat -c '%A %a %U:%G %n' \
+      /var/www/nathanbrenton.com \
+      /var/www/nathanbrenton.com/releases \
+      /var/www/hiplingo.com \
+      /var/www/hiplingo.com/app \
+      /var/www/hiplingo.com/app/releases \
+      /var/www/hiplingo.com/published-media
+
+Before the first real media deployment, expected Hiplingo entries include:
+
+    /var/www/hiplingo.com
+        root:hiplingo-media-deploy 3775
+
+    /var/www/hiplingo.com/app
+        root:hiplingo-app-deploy 2775
+
+    /var/www/hiplingo.com/published-media
+        deploy-hiplingo-media:hiplingo-media-deploy 2775
 
 
 14. PUBLIC SERVER — CREATE BOOTSTRAP RELEASES AND CURRENT SYMLINKS
@@ -803,6 +1083,13 @@ server {
         autoindex off;
     }
 
+
+Public-media permission requirement:
+    nginx/www-data is intentionally not a deployment-group member.
+    The published tree must therefore be traversable/readable without group
+    membership: directories 0755, files 0644. Unknown/binary .wfp files are
+    expected to be served as application/octet-stream.
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -854,13 +1141,24 @@ No shell command changes DNS unless your provider has its own CLI/API.
 
 For nathanbrenton.com:
 
-    A     @      <PUBLIC_IPV4>     TTL 1 hour
-    A     www    <PUBLIC_IPV4>     TTL 1 hour
+    A     @            <PUBLIC_IPV4>     TTL 1 hour
+    A     www          <PUBLIC_IPV4>     TTL 1 hour
+    A     web-prod-01  <PUBLIC_IPV4>     TTL 1 hour
 
 For hiplingo.com:
 
-    A     @      <PUBLIC_IPV4>     TTL 1 hour
-    A     www    <PUBLIC_IPV4>     TTL 1 hour
+    A     @            <PUBLIC_IPV4>     TTL 1 hour
+    A     www          <PUBLIC_IPV4>     TTL 1 hour
+
+At the VPS/provider reverse-DNS control:
+    PTR <PUBLIC_IPV4> -> web-prod-01.nathanbrenton.com.
+
+The web-prod-01 A/PTR pair is required before SMTP exposure and before the
+dedicated SMTP hostname certificate is requested.
+
+Do NOT publish the root MX or SRS MX/SPF records yet if the mail stack has not
+been built. Those are added later only after local recipient/relay/SRS/TLS
+validation.
 
 Remove conflicting www CNAME records.
 Do not create AAAA records unless this host's IPv6 firewall/routing is also
@@ -877,8 +1175,13 @@ Output: SAFE TO PASTE; PRIVACY-SENSITIVE because public IPs appear.
     dig +short A www.nathanbrenton.com
     dig +short A hiplingo.com
     dig +short A www.hiplingo.com
+    dig +short A web-prod-01.nathanbrenton.com
+    dig +short -x "$SERVER_IP"
 
-Confirm all four resolve to SERVER_IP.
+Confirm the four web hostnames plus web-prod-01 resolve to SERVER_IP.
+Confirm reverse DNS returns:
+
+    web-prod-01.nathanbrenton.com.
 
 Confirm no unexpected IPv6 records:
 
@@ -962,6 +1265,1051 @@ An empty /media/ directory is correct until metadata-editor's sanitized
 published-media package is intentionally deployed.
 
 
+19A. PUBLIC SERVER — HARDEN SPA HIDDEN-PATH REQUESTS
+====================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Why this exists
+---------------
+During production commissioning, a scanner requested /.git/config and nginx
+returned HTTP 200. A careful audit proved there was NO repository disclosure:
+the response hash was identical to /index.html, and no .git/config or .env
+files existed in either deployed web tree.
+
+The cause was the SPA fallback:
+
+    try_files $uri $uri/ /index.html;
+
+Unknown hidden-looking paths were being converted into successful app-shell
+responses.
+
+After Certbot has created the final HTTPS server blocks, add a hidden-path
+guard to the APPLICATION server block for each site:
+
+    location ~ /\. {
+        return 404;
+    }
+
+Do NOT add a generic /.well-known exception here merely for the later SMTP
+certificate. The SMTP certificate gets its own dedicated ACME hostname/vhost.
+
+Guarded insertion using the unique application root line:
+
+    for SPEC in \
+      '/etc/nginx/sites-enabled/nathanbrenton.com|    root /var/www/nathanbrenton.com/current;' \
+      '/etc/nginx/sites-enabled/hiplingo.com|    root /var/www/hiplingo.com/app/current;'
+    do
+      FILE="${SPEC%%|*}"
+      ROOT_LINE="${SPEC#*|}"
+
+      sudo python3 - "$FILE" "$ROOT_LINE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+root_line = sys.argv[2]
+text = path.read_text()
+
+needle = root_line + "\n"
+
+if text.count(needle) != 1:
+    raise SystemExit(
+        f"STOP: expected exactly one application root in {path}"
+    )
+
+if "location ~ /\\. {" in text:
+    raise SystemExit(
+        f"STOP: hidden-path rule already present in {path}"
+    )
+
+snippet = r'''
+    # Block hidden files/directories before SPA fallback can serve index.html.
+    # Examples: /.git/config, /.env, /.ssh/id_rsa
+    location ~ /\. {
+        return 404;
+    }
+
+'''
+
+path.write_text(text.replace(needle, needle + snippet, 1))
+PY
+    done
+
+Validate BEFORE reload:
+
+    sudo nginx -t
+
+Then:
+
+    sudo systemctl reload nginx
+
+External validation:
+
+    for host in nathanbrenton.com hiplingo.com; do
+        printf '%s root=' "$host"
+        curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/"
+
+        for path in \
+          /.git/config \
+          /.env \
+          /.env.production \
+          /.ssh/id_rsa
+        do
+            printf '%s %-20s ' "$host" "$path"
+            curl -sS -o /dev/null -w '%{http_code}\n' \
+              "https://$host$path"
+        done
+    done
+
+Expected:
+    site roots -> 200
+    hidden probes -> 404
+
+Defense in depth:
+    Deployment tooling should still exclude .git, .env, private keys, and
+    secret files. nginx 404 handling is an additional boundary, not permission
+    to deploy sensitive files.
+
+
+19B. PUBLIC SERVER — INSTALL / STAGE POSTFIX FOR LOCAL-ONLY MAIL FIRST
+=====================================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE, except do not paste recipient values if you choose to
+inspect the private config files directly.
+
+Install:
+
+    echo 'postfix postfix/main_mailer_type select Internet Site' \
+      | sudo debconf-set-selections
+
+    echo 'postfix postfix/mailname string nathanbrenton.com' \
+      | sudo debconf-set-selections
+
+    sudo apt update
+
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+      postfix \
+      opendkim \
+      opendkim-tools \
+      postsrsd
+
+IMPORTANT:
+    Keep SMTP loopback-only while building and testing mail policy.
+
+Core Postfix:
+
+    sudo postconf -e 'myhostname = web-prod-01.nathanbrenton.com'
+    sudo postconf -e 'mydomain = nathanbrenton.com'
+    sudo postconf -e 'myorigin = $mydomain'
+    sudo postconf -e 'mydestination ='
+    sudo postconf -e 'inet_interfaces = loopback-only'
+    sudo postconf -e 'inet_protocols = ipv4'
+    sudo postconf -e 'relayhost ='
+    sudo postconf -e 'smtp_tls_security_level = may'
+
+Explicit trusted-client / anti-relay boundary:
+
+    sudo postconf -e \
+      'mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128'
+
+    sudo postconf -e \
+      'smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination'
+
+    sudo postconf -e 'smtpd_reject_unlisted_recipient = yes'
+
+    sudo postfix check
+    sudo systemctl enable --now postfix
+
+At this point:
+    Postfix may listen on loopback TCP/25 only.
+    nftables must still have NO TCP/25 accept rule.
+
+
+19C. PUBLIC SERVER — CONFIGURE OPERATIONAL OUTBOUND MAIL / OPENDKIM
+==================================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE unless private-key content is explicitly printed.
+
+The operational/status producer configuration lives in:
+
+    /etc/server-monitor/config
+
+Required logical values:
+
+    ADMIN_EMAIL="admin@hiplingo.com"
+    MAIL_FROM="alerts@ops.nathanbrenton.com"
+    MAIL_FROM_NAME="Hiplingo Server Monitor"
+
+IMPORTANT:
+    ADMIN_EMAIL is the stable internal operations alias, not the real inbox.
+    The real operations destination is configured in the next section as
+    ADMIN_FORWARD_TARGET in /etc/postfix/admin-forwarding.regexp.
+
+Create /etc/server-monitor/config with the canonical values plus the existing
+resource thresholds required by server-health-report. Keep the file root:root
+mode 0600.
+
+Create operational DKIM key:
+
+    sudo install -d \
+      -o opendkim \
+      -g opendkim \
+      -m 700 \
+      /etc/opendkim/keys/ops.nathanbrenton.com
+
+    cd /etc/opendkim/keys/ops.nathanbrenton.com
+
+    sudo -u opendkim /usr/sbin/opendkim-genkey \
+      -b 2048 \
+      -d ops.nathanbrenton.com \
+      -s webprod01-202608
+
+    sudo chown opendkim:opendkim \
+      webprod01-202608.private \
+      webprod01-202608.txt
+
+    sudo chmod 600 webprod01-202608.private
+
+DO NOT PASTE:
+    webprod01-202608.private
+
+Configure /etc/opendkim.conf with:
+
+    Syslog                  yes
+    SyslogSuccess           yes
+
+    Mode                    s
+    Canonicalization        relaxed/simple
+    OversignHeaders         From
+
+    UserID                  opendkim
+    PidFile                 /run/opendkim/opendkim.pid
+
+    Socket                  inet:8891@[127.0.0.1]
+
+    Domain                  ops.nathanbrenton.com
+    Selector                webprod01-202608
+    KeyFile                 /etc/opendkim/keys/ops.nathanbrenton.com/webprod01-202608.private
+
+    TrustAnchorFile         /usr/share/dns/root.key
+
+Postfix milter integration:
+
+    sudo postconf -e 'smtpd_milters = inet:127.0.0.1:8891'
+    sudo postconf -e 'non_smtpd_milters = inet:127.0.0.1:8891'
+    sudo postconf -e 'milter_protocol = 6'
+    sudo postconf -e 'milter_default_action = tempfail'
+
+    sudo systemctl enable --now opendkim
+    sudo systemctl restart opendkim
+
+    sudo postfix check
+    sudo postfix reload
+
+Publish operational DNS in nathanbrenton.com:
+
+    TXT ops
+        v=spf1 ip4:<PUBLIC_IPV4> -all
+
+    TXT webprod01-202608._domainkey.ops
+        <PUBLIC DKIM TXT GENERATED ABOVE>
+
+    TXT _dmarc.ops
+        v=DMARC1; p=none
+
+Validate:
+
+    sudo opendkim-testkey \
+      -d ops.nathanbrenton.com \
+      -s webprod01-202608 \
+      -vvv
+
+Expected:
+    key OK
+
+
+19D. PUBLIC SERVER — CONFIGURE INBOUND FORWARDING + POSTSRSD
+===============================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE as written, except do not paste entered forwarding
+recipient values if you consider them privacy-sensitive.
+DO NOT PASTE: /etc/postsrsd.secret.
+
+Purpose
+-------
+PostSRSd rewrites forwarded envelope senders so SPF can authenticate the
+forwarding VPS and signed return addresses can be safely decoded for bounces.
+
+Debian 13 package validated:
+    postsrsd 1.10-2.2
+
+The package creates:
+    /etc/default/postsrsd
+    /etc/postsrsd.secret
+
+Expected secret mode:
+    600
+
+Configure:
+
+    sudo sed -i -E \
+      's|^[[:space:]#]*SRS_DOMAIN=.*$|SRS_DOMAIN=srs.nathanbrenton.com|' \
+      /etc/default/postsrsd
+
+    sudo sed -i -E \
+      's|^[[:space:]#]*SRS_EXCLUDE_DOMAINS=.*$|SRS_EXCLUDE_DOMAINS=ops.nathanbrenton.com|' \
+      /etc/default/postsrsd
+
+Confirm:
+
+    grep '^SRS_DOMAIN=' /etc/default/postsrsd
+    grep '^SRS_EXCLUDE_DOMAINS=' /etc/default/postsrsd
+    grep '^SRS_LISTEN_ADDR=' /etc/default/postsrsd
+    sudo stat -c 'secret_mode=%a' /etc/postsrsd.secret
+
+Expected:
+    SRS_DOMAIN=srs.nathanbrenton.com
+    SRS_EXCLUDE_DOMAINS=ops.nathanbrenton.com
+    SRS_LISTEN_ADDR=127.0.0.1
+    secret_mode=600
+
+Create TWO independent forwarding maps.
+
+IMPORTANT:
+    ADMIN_EMAIL remains admin@hiplingo.com. Do not put the real operations
+    inbox into /etc/server-monitor/config or Monit's set alert line.
+
+    ADMIN_FORWARD_TARGET and CONTACT_FORWARD_TARGET are entered independently
+    and then hard-coded into separate root-owned Postfix maps. They may be the
+    same real inbox today, but changing either later must not affect the other.
+
+Read the destinations interactively:
+
+    read -r -p 'Operations/admin forwarding target: ' ADMIN_FORWARD_TARGET
+    read -r -p 'Business/public forwarding target: ' CONTACT_FORWARD_TARGET
+
+    case "$ADMIN_FORWARD_TARGET" in
+      *@*) ;;
+      *) echo 'STOP: invalid admin target'; exit 1 ;;
+    esac
+
+    case "$CONTACT_FORWARD_TARGET" in
+      *@*) ;;
+      *) echo 'STOP: invalid contact target'; exit 1 ;;
+    esac
+
+Create the operations/admin map:
+
+    sudo tee /etc/postfix/admin-forwarding.regexp >/dev/null <<EOF_ADMIN
+# Hiplingo inbound operations/admin forwarding.
+#
+# ADMIN_FORWARD_TARGET
+# This destination is intentionally independent from CONTACT_FORWARD_TARGET.
+/^admin@hiplingo\.com$/    ${ADMIN_FORWARD_TARGET}
+EOF_ADMIN
+
+Create the business/public map:
+
+    sudo tee /etc/postfix/contact-forwarding.regexp >/dev/null <<EOF_CONTACT
+# Hiplingo / Nathan Brenton public business contact forwarding.
+#
+# CONTACT_FORWARD_TARGET
+# This destination is intentionally independent from ADMIN_FORWARD_TARGET.
+/^(info|postmaster)@(nathanbrenton\.com|hiplingo\.com)$/    ${CONTACT_FORWARD_TARGET}
+/^nathan@nathanbrenton\.com$/    ${CONTACT_FORWARD_TARGET}
+/^(nathan|licensing|press|accounting)@hiplingo\.com$/    ${CONTACT_FORWARD_TARGET}
+EOF_CONTACT
+
+    unset ADMIN_FORWARD_TARGET CONTACT_FORWARD_TARGET
+
+    sudo chown root:root \
+      /etc/postfix/admin-forwarding.regexp \
+      /etc/postfix/contact-forwarding.regexp
+
+    sudo chmod 0644 \
+      /etc/postfix/admin-forwarding.regexp \
+      /etc/postfix/contact-forwarding.regexp
+
+Configure virtual alias domains and SRS maps:
+
+    sudo postconf -e \
+      'virtual_alias_domains = nathanbrenton.com hiplingo.com srs.nathanbrenton.com'
+
+    sudo postconf -e \
+      'virtual_alias_maps = regexp:/etc/postfix/admin-forwarding.regexp, regexp:/etc/postfix/contact-forwarding.regexp, tcp:127.0.0.1:10002'
+
+    sudo postconf -e \
+      'sender_canonical_maps = tcp:127.0.0.1:10001'
+
+    sudo postconf -e \
+      'sender_canonical_classes = envelope_sender'
+
+    sudo postconf -e \
+      'recipient_canonical_maps = tcp:127.0.0.1:10002'
+
+    sudo postconf -e \
+      'recipient_canonical_classes = envelope_recipient, header_recipient'
+
+    sudo systemctl enable postsrsd
+    sudo systemctl restart postsrsd
+
+    sudo postfix check
+    sudo postfix reload
+
+Validate PostSRSd listeners:
+
+    sudo ss -lntp | grep -E ':(10001|10002)[[:space:]]'
+
+Expected:
+    127.0.0.1:10001
+    127.0.0.1:10002
+
+Validate routing without printing the real destinations:
+
+    admin_result="$(
+      sudo /usr/sbin/postmap -q admin@hiplingo.com \
+        regexp:/etc/postfix/admin-forwarding.regexp
+    )"
+    [ -n "$admin_result" ] || { echo 'STOP: admin alias missing'; exit 1; }
+    echo 'admin@hiplingo.com=OPERATIONS_MATCH'
+
+    test -z "$(
+      sudo /usr/sbin/postmap -q admin@hiplingo.com \
+        regexp:/etc/postfix/contact-forwarding.regexp
+    )"
+    echo 'admin_business_map_separation=PASS'
+
+    for address in \
+      info@nathanbrenton.com \
+      postmaster@nathanbrenton.com \
+      nathan@nathanbrenton.com \
+      info@hiplingo.com \
+      postmaster@hiplingo.com \
+      nathan@hiplingo.com \
+      licensing@hiplingo.com \
+      press@hiplingo.com \
+      accounting@hiplingo.com
+    do
+      result="$(
+        sudo /usr/sbin/postmap -q "$address" \
+          regexp:/etc/postfix/contact-forwarding.regexp
+      )"
+      [ -n "$result" ] || { echo "STOP: missing alias $address"; exit 1; }
+      echo "$address=BUSINESS_MATCH"
+    done
+
+Validate random aliases return no mapping:
+
+    for address in \
+      random@nathanbrenton.com \
+      random@hiplingo.com
+    do
+      result="$(
+        sudo /usr/sbin/postmap -q "$address" \
+          regexp:/etc/postfix/contact-forwarding.regexp
+      )"
+
+      [ -z "$result" ] || {
+        echo "STOP: unexpected catch-all mapping for $address"
+        exit 1
+      }
+    done
+
+SRS round trip:
+
+    ORIGINAL='bounce-validation@example.net'
+
+    SRS_ADDRESS="$(
+      sudo /usr/sbin/postmap -q "$ORIGINAL" tcp:127.0.0.1:10001
+    )"
+
+    case "$SRS_ADDRESS" in
+      *@srs.nathanbrenton.com) ;;
+      *) echo "STOP: unexpected SRS domain"; exit 1 ;;
+    esac
+
+    REVERSED="$(
+      sudo /usr/sbin/postmap -q "$SRS_ADDRESS" tcp:127.0.0.1:10002
+    )"
+
+    [ "$REVERSED" = "$ORIGINAL" ] || {
+        echo "STOP: SRS reverse lookup failed"
+        exit 1
+    }
+
+A forged SRS address must NOT resolve:
+
+    FORGED='SRS0=INVALID=INVALID=example.net=test@srs.nathanbrenton.com'
+
+    test -z "$(
+      sudo /usr/sbin/postmap -q "$FORGED" tcp:127.0.0.1:10002
+    )"
+
+
+19E. PUBLIC SERVER — CREATE DEDICATED SMTP-HOST ACME VHOST + CERTIFICATE
+=======================================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+DO NOT PASTE: TLS private key contents.
+
+Create dedicated webroot:
+
+    sudo mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
+    sudo chown -R root:root /var/www/letsencrypt
+    sudo chmod 0755 \
+      /var/www/letsencrypt \
+      /var/www/letsencrypt/.well-known \
+      /var/www/letsencrypt/.well-known/acme-challenge
+
+Create:
+
+    /etc/nginx/conf.d/web-prod-01-mail-acme.conf
+
+    sudo tee /etc/nginx/conf.d/web-prod-01-mail-acme.conf >/dev/null <<'EOF_MAIL_NGINX'
+server {
+    listen 80;
+    server_name web-prod-01.nathanbrenton.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF_MAIL_NGINX
+
+Validate:
+
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+Test ACME path before Certbot:
+
+    TOKEN="smtp-acme-$(date +%s)"
+
+    printf '%s\n' "$TOKEN" |
+      sudo tee \
+        "/var/www/letsencrypt/.well-known/acme-challenge/$TOKEN" \
+        >/dev/null
+
+    test "$(
+      curl -fsS \
+        "http://web-prod-01.nathanbrenton.com/.well-known/acme-challenge/$TOKEN"
+    )" = "$TOKEN"
+
+    sudo rm -f \
+      "/var/www/letsencrypt/.well-known/acme-challenge/$TOKEN"
+
+Obtain dedicated SMTP certificate:
+
+    sudo certbot certonly \
+      --webroot \
+      --webroot-path /var/www/letsencrypt \
+      --cert-name web-prod-01.nathanbrenton.com \
+      --domain web-prod-01.nathanbrenton.com \
+      --non-interactive
+
+Configure inbound STARTTLS:
+
+    sudo postconf -e \
+      'smtpd_tls_cert_file = /etc/letsencrypt/live/web-prod-01.nathanbrenton.com/fullchain.pem'
+
+    sudo postconf -e \
+      'smtpd_tls_key_file = /etc/letsencrypt/live/web-prod-01.nathanbrenton.com/privkey.pem'
+
+    sudo postconf -e 'smtpd_tls_security_level = may'
+
+    sudo postfix check
+    sudo postfix reload
+
+Local certificate validation:
+
+    timeout 15 openssl s_client \
+      -starttls smtp \
+      -connect 127.0.0.1:25 \
+      -servername web-prod-01.nathanbrenton.com \
+      -verify_hostname web-prod-01.nathanbrenton.com \
+      -CApath /etc/ssl/certs \
+      </dev/null 2>&1 |
+      grep -E 'subject=|issuer=|Verification:|Verify return code:'
+
+Expected:
+    Verify return code: 0 (ok)
+
+Install deploy hook:
+
+    sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+
+    sudo tee \
+      /etc/letsencrypt/renewal-hooks/deploy/50-reload-postfix-mail-cert \
+      >/dev/null <<'EOF_HOOK'
+#!/bin/sh
+#
+# Reload Postfix after the dedicated SMTP certificate renews.
+
+case " ${RENEWED_DOMAINS:-} " in
+  *" web-prod-01.nathanbrenton.com "*)
+    OUTPUT="$(/usr/sbin/postfix reload 2>&1)"
+    STATUS=$?
+
+    if [ "$STATUS" -ne 0 ]; then
+      printf '%s\n' "$OUTPUT" >&2
+      exit "$STATUS"
+    fi
+
+    if [ -n "$OUTPUT" ]; then
+      /usr/bin/logger \
+        -t certbot-postfix-reload \
+        -- "$OUTPUT"
+    fi
+    ;;
+esac
+
+exit 0
+EOF_HOOK
+
+    sudo chown root:root \
+      /etc/letsencrypt/renewal-hooks/deploy/50-reload-postfix-mail-cert
+
+    sudo chmod 0755 \
+      /etc/letsencrypt/renewal-hooks/deploy/50-reload-postfix-mail-cert
+
+    sudo sh -n \
+      /etc/letsencrypt/renewal-hooks/deploy/50-reload-postfix-mail-cert
+
+Validate the renewal path:
+
+    sudo certbot renew \
+      --cert-name web-prod-01.nathanbrenton.com \
+      --dry-run \
+      --run-deploy-hooks
+
+Then:
+
+    systemctl is-active postfix
+    sudo postfix check
+
+Known benign output on this host:
+    Certbot may label
+
+        postfix/postlog: refreshing the Postfix mail system
+
+    as deploy-hook "error output" even when all simulated renewals succeed.
+    Treat that as cosmetic only when Certbot reports success and Postfix
+    remains active/valid.
+
+
+19F. DNS PROVIDER — PUBLISH PUBLIC CONTACT + SRS MAIL DNS
+========================================================
+
+Run at: DNS PROVIDER CONTROL PANEL
+
+Do this only after:
+    local recipient policy passes
+    PostSRSd round-trip passes
+    SMTP certificate passes locally
+    public SMTP is still firewalled
+
+nathanbrenton.com:
+
+    MX   @     priority 10   web-prod-01.nathanbrenton.com.
+    MX   srs   priority 10   web-prod-01.nathanbrenton.com.
+    TXT  srs                 v=spf1 ip4:<PUBLIC_IPV4> -all
+
+hiplingo.com:
+
+    MX   @     priority 10   web-prod-01.nathanbrenton.com.
+
+A temporary 30-minute TTL is reasonable during commissioning.
+
+No A record is required for srs.nathanbrenton.com because the SRS hostname has
+an explicit MX pointing to web-prod-01.nathanbrenton.com.
+
+Validate authoritatively and through multiple public resolvers BEFORE opening
+TCP/25:
+
+    dig @1.1.1.1 +short MX nathanbrenton.com
+    dig @1.1.1.1 +short MX hiplingo.com
+    dig @1.1.1.1 +short MX srs.nathanbrenton.com
+    dig @1.1.1.1 +short TXT srs.nathanbrenton.com
+
+    dig @8.8.8.8 +short MX nathanbrenton.com
+    dig @8.8.8.8 +short MX hiplingo.com
+    dig @8.8.8.8 +short MX srs.nathanbrenton.com
+    dig @8.8.8.8 +short TXT srs.nathanbrenton.com
+
+    dig @9.9.9.9 +short MX nathanbrenton.com
+    dig @9.9.9.9 +short MX hiplingo.com
+    dig @9.9.9.9 +short MX srs.nathanbrenton.com
+    dig @9.9.9.9 +short TXT srs.nathanbrenton.com
+
+Expected SRS SPF exactly:
+
+    "v=spf1 ip4:<PUBLIC_IPV4> -all"
+
+Do not accidentally use "~all"; production validation intentionally requires
+the hard-fail "-all" value.
+
+
+19G. PUBLIC SERVER — FINAL SMTP EXPOSURE
+========================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE.
+
+Precondition:
+    nftables still blocks TCP/25.
+    Postfix currently has inet_interfaces=loopback-only.
+
+First bind Postfix behind the still-closed firewall:
+
+    sudo postconf -e \
+      'inet_interfaces = 127.0.0.1, <PUBLIC_IPV4>'
+
+IMPORTANT:
+    Postfix requires stop/start after changing inet_interfaces.
+
+    sudo postfix check
+    sudo postfix stop
+    sudo postfix start
+
+Verify exact listeners:
+
+    sudo ss -lntp | grep -E '(:25[[:space:]]|:25$)'
+
+Expected:
+    127.0.0.1:25
+    <PUBLIC_IPV4>:25
+
+Before opening the firewall, test recipient policy from an UNTRUSTED source.
+Do not use 127.0.0.1 for the open-relay test because localhost is intentionally
+trusted by mynetworks.
+
+Expected untrusted behavior:
+
+    admin@hiplingo.com           -> SMTP 250
+    configured business aliases  -> SMTP 250
+    random local alias           -> SMTP 550
+    unrelated external relay     -> SMTP 4xx/5xx (validated production: 454)
+
+Only after that passes, update persistent nftables from:
+
+    tcp dport { 22, 80, 443 } ct state new accept
+
+to:
+
+    tcp dport { 22, 25, 80, 443 } ct state new accept
+
+or add an equivalent single TCP/25 accept rule in the input chain.
+
+Validate syntax before applying:
+
+    sudo nft -c -f /etc/nftables.conf
+
+Then apply:
+
+    sudo systemctl restart nftables
+
+Verify:
+
+    sudo nft list chain inet filter input
+    sudo ss -lntp | grep -E '(:25[[:space:]]|:25$)'
+
+Final firewall:
+    TCP 22/25/80/443 accepted
+    default inbound policy remains drop
+
+
+19H. LOCAL CLIENT — EXTERNAL SMTP POLICY + TLS VALIDATION
+========================================================
+
+Run on: LOCAL CLIENT (Mac)
+Output: SAFE TO PASTE.
+
+Connectivity:
+
+    nc -vz -w 10 web-prod-01.nathanbrenton.com 25
+
+STARTTLS:
+
+    python3 <<'PY'
+import smtplib
+import ssl
+
+host = "web-prod-01.nathanbrenton.com"
+
+smtp = smtplib.SMTP(host, 25, timeout=15)
+smtp.ehlo("external-tls-validation")
+
+if not smtp.has_extn("starttls"):
+    raise SystemExit("STARTTLS not advertised")
+
+smtp.starttls(context=ssl.create_default_context())
+smtp.ehlo("external-tls-validation")
+
+print("TLS", smtp.sock.version())
+print("PASS: trusted STARTTLS")
+
+smtp.quit()
+PY
+
+Recipient/relay policy test:
+    connect externally
+    issue EHLO / MAIL FROM / RCPT TO
+    intentionally DO NOT issue DATA
+
+Expected:
+
+    admin@hiplingo.com           -> 250
+    info@nathanbrenton.com       -> 250
+    postmaster@nathanbrenton.com -> 250
+    nathan@nathanbrenton.com     -> 250
+    info@hiplingo.com            -> 250
+    postmaster@hiplingo.com      -> 250
+    nathan@hiplingo.com          -> 250
+    licensing@hiplingo.com       -> 250
+    press@hiplingo.com           -> 250
+    accounting@hiplingo.com      -> 250
+    random@nathanbrenton.com     -> 550
+    random@hiplingo.com          -> 550
+    unrelated external relay     -> 4xx/5xx
+
+Production validation observed:
+    unknown -> 550
+    external relay -> 454
+    TLS -> TLSv1.3
+
+Finally send a small representative set of real messages:
+
+    1. nathan@nathanbrenton.com -> verifies the business/public path
+    2. admin@hiplingo.com       -> verifies the operations/admin path
+
+The remaining business role addresses use the same already-validated contact
+regexp map and do not each require a real message during routine rebuilds.
+
+For forwarded external mail, validate as applicable:
+
+    To: preserved
+    Return-Path/envelope sender -> @srs.nathanbrenton.com
+    SPF -> PASS
+    original DKIM -> present/valid
+    not Spam
+
+Production validation on 2026-08-19 confirmed real delivery through both the
+business and operations paths.
+
+
+
+19I. PUBLIC SERVER — CONFIGURE PRODUCTION MONITORING
+====================================================
+
+Run on: PUBLIC SERVER as n8
+Output: SAFE TO PASTE except configured email addresses should be redacted.
+
+Monitoring design
+-----------------
+Immediate alerts:
+
+    Monit -> native SMTP 127.0.0.1:25 -> Postfix -> recipient MX
+
+Do NOT recreate:
+
+    /usr/local/sbin/server-monitor-alert
+
+Do NOT add a Monit maildrop write exception merely for alert delivery.
+
+A. LOCAL-ONLY MONIT CONTROL
+---------------------------
+
+Ensure Monit is enabled:
+
+    sudo systemctl enable --now monit
+
+The validated daemon interval is 120 seconds.
+
+Configure a root-only Unix control socket; do not expose TCP/2812.
+
+    sudo bash <<'EOF'
+    set -euo pipefail
+    PASSWORD="$(openssl rand -hex 24)"
+
+    cat > /etc/monit/conf.d/local-control <<MONIT
+set httpd unixsocket /run/monit.sock
+    permission 0600
+    allow monitcli:${PASSWORD}
+MONIT
+
+    chown root:root /etc/monit/conf.d/local-control
+    chmod 600 /etc/monit/conf.d/local-control
+    EOF
+
+DO NOT PASTE:
+    /etc/monit/conf.d/local-control
+
+
+B. NATIVE SMTP ALERT CONFIG
+---------------------------
+
+Create /etc/monit/conf.d/mail-alerts using:
+
+    set mailserver 127.0.0.1 port 25
+        with timeout 15 seconds
+
+    set mail-format {
+        from: Hiplingo Server Monitor <alerts@ops.nathanbrenton.com>
+        subject: [$HOST] MONIT: $SERVICE — $EVENT
+        message: $HOST — Monit Event
+                 ==============================
+
+                 Service:     $SERVICE
+                 Event:       $EVENT
+                 Event time:  $DATE
+                 Action:      $ACTION
+
+                 Description:
+                 $DESCRIPTION
+
+                 This message was generated by the server-wide monitoring subsystem.
+    }
+
+    set alert admin@hiplingo.com
+
+The daily report also uses ADMIN_EMAIL=admin@hiplingo.com in
+/etc/server-monitor/config. These are stable internal addresses, not copies of
+the real operations inbox. To move the real operations destination, edit only
+/etc/postfix/admin-forwarding.regexp. This remains independent from the
+business CONTACT_FORWARD_TARGET.
+
+
+C. RESOURCE CHECKS
+------------------
+
+/etc/monit/conf.d/server-resources:
+
+    check system web-prod-01
+        if cpu usage > 85% for 3 cycles then alert
+        if memory usage > 85% for 3 cycles then alert
+
+    check filesystem root-filesystem with path /
+        if space usage > 80% for 2 cycles then alert
+        if inode usage > 80% for 2 cycles then alert
+
+
+D. SYSTEMD SERVICE CHECKS
+-------------------------
+
+/etc/monit/conf.d/systemd-services:
+
+    check program nginx-systemd
+        with path "/usr/bin/systemctl is-active nginx.service"
+        if status != 0 for 2 cycles then alert
+
+    check program ssh-systemd
+        with path "/usr/bin/systemctl is-active ssh.service"
+        if status != 0 for 2 cycles then alert
+
+    check program nftables-systemd
+        with path "/usr/bin/systemctl is-active nftables.service"
+        if status != 0 for 2 cycles then alert
+
+    check program fail2ban-systemd
+        with path "/usr/bin/systemctl is-active fail2ban.service"
+        if status != 0 for 2 cycles then alert
+
+    check program postfix-systemd
+        with path "/usr/bin/systemctl is-active postfix.service"
+        if status != 0 for 2 cycles then alert
+
+    check program opendkim-systemd
+        with path "/usr/bin/systemctl is-active opendkim.service"
+        if status != 0 for 2 cycles then alert
+
+    check program postsrsd-systemd
+        with path "/usr/bin/systemctl is-active postsrsd.service"
+        if status != 0 for 2 cycles then alert
+
+Protect files:
+
+    sudo chown root:root \
+      /etc/monit/conf.d/mail-alerts \
+      /etc/monit/conf.d/server-resources \
+      /etc/monit/conf.d/systemd-services
+
+    sudo chmod 600 \
+      /etc/monit/conf.d/mail-alerts \
+      /etc/monit/conf.d/server-resources \
+      /etc/monit/conf.d/systemd-services
+
+
+E. VALIDATE / LOAD
+------------------
+
+    sudo monit -t
+    sudo monit reload
+
+Program checks are asynchronous. With the 120-second interval a newly added
+check can remain "Initializing" for one full cycle plus collection time.
+
+Observed postsrsd-systemd commissioning:
+
+    ~15-120 seconds -> Initializing
+    ~135 seconds    -> OK
+
+Validate:
+
+    sudo monit summary
+
+Expected:
+    nginx-systemd        OK
+    ssh-systemd          OK
+    nftables-systemd     OK
+    fail2ban-systemd     OK
+    postfix-systemd      OK
+    opendkim-systemd     OK
+    postsrsd-systemd     OK
+
+Verify Monit is not on TCP/2812:
+
+    if sudo ss -lntp | grep -q ':2812'; then
+        echo "monit_tcp_2812=UNEXPECTED_LISTENER"
+    else
+        echo "monit_tcp_2812=not-listening"
+    fi
+
+
+F. DAILY HEALTH REPORT
+----------------------
+
+Use the companion email-monitoring runbook for the authoritative
+/usr/local/sbin/server-health-report implementation.
+
+Required production properties:
+
+    /usr/local/sbin/server-health-report
+        root:root mode 750
+
+    /etc/server-monitor/config
+        root:root mode 600
+
+    server-health-report.timer
+        08:00 America/Los_Angeles
+        enabled + active
+
+The daily report uses /usr/sbin/sendmail through Postfix. It is separate from
+Monit's native SMTP alert mechanism.
+
+
+
 20. PUBLIC SERVER — CUSTOMIZE THE STATIC MOTD
 =============================================
 
@@ -1023,12 +2371,21 @@ Output: SAFE TO PASTE.
 
 Validated intent:
 
-    /var/www/nathanbrenton.com             root:nathan-deploy          2775
-    /var/www/nathanbrenton.com/releases    root:nathan-deploy          2775
-    /var/www/hiplingo.com                  root:root                   0755
-    /var/www/hiplingo.com/app              root:hiplingo-app-deploy    2775
-    /var/www/hiplingo.com/app/releases     root:hiplingo-app-deploy    2775
-    /var/www/hiplingo.com/published-media  root:hiplingo-media-deploy  2775
+    /var/www/nathanbrenton.com             root:nathan-deploy                     2775
+    /var/www/nathanbrenton.com/releases    root:nathan-deploy                     2775
+    /var/www/hiplingo.com                  root:hiplingo-media-deploy              3775
+    /var/www/hiplingo.com/app              root:hiplingo-app-deploy               2775
+    /var/www/hiplingo.com/app/releases     root:hiplingo-app-deploy               2775
+
+Before first media deploy:
+    /var/www/hiplingo.com/published-media  deploy-hiplingo-media:hiplingo-media-deploy 2775
+
+After an atomic media deploy:
+    /var/www/hiplingo.com/published-media  deploy-hiplingo-media:hiplingo-media-deploy 0755
+
+The post-deploy 0755 mode is intentional because deployment rsync normalizes
+public directories. Atomic rename authority comes from ownership of the live
+tree plus write access to the sticky 3775 parent.
 
 Confirm nginx has no deployment-group membership:
 
@@ -1089,6 +2446,20 @@ Hiplingo media — allowed write:
        rm /var/www/hiplingo.com/published-media/.boundary-test && \
        echo deploy-hiplingo-media-own-boundary=PASS'
 
+Hiplingo media — REQUIRED atomic sibling staging permission:
+
+    ssh -i "$DEPLOY_HIPLINGO_MEDIA_KEY" deploy-hiplingo-media@"$SERVER_IP" '
+      probe="/var/www/hiplingo.com/published-media.metadata-editor-permission-probe.$$"
+      mkdir "$probe" &&
+      rmdir "$probe" &&
+      echo deploy-hiplingo-media-atomic-sibling=PASS
+    '
+
+This second test is essential. A deploy user can be able to touch files inside
+published-media while still being unable to perform metadata-editor's atomic
+sibling staging. The initial production deployment exposed exactly that
+difference.
+
 Hiplingo media — forbidden frontend write:
 
     if ssh -i "$DEPLOY_HIPLINGO_MEDIA_KEY" deploy-hiplingo-media@"$SERVER_IP" \
@@ -1121,6 +2492,12 @@ Fail2ban output.
     printf 'nftables_enabled='; systemctl is-enabled nftables
     printf 'fail2ban='; systemctl is-active fail2ban
     printf 'fail2ban_enabled='; systemctl is-enabled fail2ban
+    printf 'postfix='; systemctl is-active postfix
+    printf 'postsrsd='; systemctl is-active postsrsd
+    printf 'opendkim='; systemctl is-active opendkim
+    printf 'monit='; systemctl is-active monit
+    printf 'monit_enabled='; systemctl is-enabled monit
+    printf 'health_timer='; systemctl is-enabled server-health-report.timer
     printf 'certbot_timer='; systemctl is-enabled certbot.timer
     printf 'apt_daily='; systemctl is-enabled apt-daily.timer
     printf 'apt_daily_upgrade='; systemctl is-enabled apt-daily-upgrade.timer
@@ -1134,6 +2511,50 @@ Fail2ban output.
     echo
     echo '----- FIREWALL TABLES -----'
     sudo nft list tables
+
+    echo
+    echo '----- SMTP / MAIL FORWARDING -----'
+    sudo postconf       myhostname       inet_interfaces       inet_protocols       virtual_alias_domains       virtual_alias_maps       sender_canonical_maps       recipient_canonical_maps       smtpd_reject_unlisted_recipient       smtpd_relay_restrictions       mynetworks       smtpd_tls_security_level       smtpd_tls_cert_file
+
+    sudo ss -lntp | grep -E '(:25[[:space:]]|:25$)' || true
+    sudo ss -lntp | grep -E ':(10001|10002)[[:space:]]' || true
+
+    echo
+    echo '----- MAIL ROUTING MAPS -----'
+    admin_result="$(sudo /usr/sbin/postmap -q admin@hiplingo.com regexp:/etc/postfix/admin-forwarding.regexp)"
+    [ -n "$admin_result" ] && echo 'admin@hiplingo.com=OPERATIONS_MATCH' || echo 'admin@hiplingo.com=FAIL'
+    for address in \
+      info@nathanbrenton.com nathan@nathanbrenton.com \
+      info@hiplingo.com nathan@hiplingo.com licensing@hiplingo.com \
+      press@hiplingo.com accounting@hiplingo.com
+    do
+      result="$(sudo /usr/sbin/postmap -q "$address" regexp:/etc/postfix/contact-forwarding.regexp)"
+      [ -n "$result" ] && echo "$address=BUSINESS_MATCH" || echo "$address=FAIL"
+    done
+
+    echo
+    echo '----- MAIL DNS -----'
+    dig @1.1.1.1 +short MX nathanbrenton.com
+    dig @1.1.1.1 +short MX hiplingo.com
+    dig @1.1.1.1 +short MX srs.nathanbrenton.com
+    dig @1.1.1.1 +short TXT srs.nathanbrenton.com
+
+    echo
+    echo '----- MAIL QUEUE -----'
+    sudo postqueue -p
+
+    echo
+    echo '----- MONIT -----'
+    sudo monit -t
+    sudo monit summary
+    sudo monit summary |
+      grep -E 'postfix-systemd|opendkim-systemd|postsrsd-systemd' || true
+
+    if sudo ss -lntp | grep -q ':2812'; then
+        echo 'monit_tcp_2812=UNEXPECTED_LISTENER'
+    else
+        echo 'monit_tcp_2812=not-listening'
+    fi
 
     echo
     echo '----- NGINX CONFIG -----'
@@ -1157,6 +2578,14 @@ Fail2ban output.
     echo
     echo '----- PENDING PACKAGE COUNT -----'
     apt list --upgradable 2>/dev/null | tail -n +2 | wc -l
+
+    echo
+    echo '----- DEPLOYMENT FILESYSTEM BOUNDARIES -----'
+    stat -c '%A %a %U:%G %n' \
+      /var/www/nathanbrenton.com \
+      /var/www/hiplingo.com \
+      /var/www/hiplingo.com/app \
+      /var/www/hiplingo.com/published-media
 
     echo
     echo '----- ACTIVE RELEASE POINTERS -----'
@@ -1189,6 +2618,20 @@ Output: SAFE TO PASTE.
 Expected:
 
     200 for all four hostnames once Certbot/nginx are correct.
+
+Hidden-path regression:
+
+    for host in nathanbrenton.com hiplingo.com; do
+      curl -sS -o /dev/null -w "$host /.git/config -> %{http_code}\n"         "https://$host/.git/config"
+      curl -sS -o /dev/null -w "$host /.env -> %{http_code}\n"         "https://$host/.env"
+    done
+
+Expected:
+    404 for all hidden-path probes.
+
+SMTP reachability:
+
+    nc -vz -w 10 web-prod-01.nathanbrenton.com 25
 
 Remember: a 200 from bootstrap pages confirms server/TLS routing only. It does
 NOT mean the real Nathan/Hiplingo application content has been deployed.
@@ -1237,14 +2680,29 @@ C. Metadata-editor sanitized public media
    Sanitized local public output:
      ~/Desktop/record-label/published-media/
 
-   Future persistent production destination:
+   Persistent production destination:
      /var/www/hiplingo.com/published-media/
+
+   Atomic staging parent:
+     /var/www/hiplingo.com/
+     root:hiplingo-media-deploy mode 3775
 
    Public URL prefix:
      https://hiplingo.com/media/
 
    Deployment identity:
      deploy-hiplingo-media
+
+   Public mode contract:
+     directories 0755
+     files       0644
+
+   Use the companion:
+     web-prod-01-hiplingo-media-deployment-runbook-20260818.txt
+
+   IMPORTANT:
+     plan/deploy with --profile production explicitly. The deployment tool's
+     default profile is local-sandbox.
 
 Frontend release deployment/rollback must never erase or roll back
 published-media. The two lifecycles are intentionally decoupled.
@@ -1266,7 +2724,8 @@ A correctly rebuilt server now has:
   [OK] deploy-user authorized keys restricted
   [OK] UFW absent
   [OK] nftables default-drop firewall
-  [OK] TCP 22/80/443 allowed
+  [OK] bootstrap firewall starts with TCP 22/80/443 only
+  [OK] final production firewall allows TCP 22/25/80/443
   [OK] Fail2ban sshd jail using journald + nftables
   [OK] Fail2ban nftables enforcement synthetic-tested
   [OK] unattended-upgrades active
@@ -1276,13 +2735,47 @@ A correctly rebuilt server now has:
   [OK] Nathan release/current architecture
   [OK] Hiplingo frontend release/current architecture
   [OK] Hiplingo persistent published-media architecture
+  [OK] Hiplingo parent root:hiplingo-media-deploy mode 3775
+  [OK] media deploy atomic sibling staging permission
+  [OK] sticky-bit protection for root-owned Hiplingo app sibling
+  [OK] public-media directories 0755 / files 0644
+  [OK] nginx/www-data remains read-only and outside deploy groups
   [OK] nginx /media/ alias to published-media
   [OK] DNS A records for root + www on both domains
   [OK] no conflicting www CNAME / no unintended AAAA
   [OK] Let's Encrypt HTTPS for both domains + www
   [OK] Certbot renewal timer enabled
+  [OK] dedicated SMTP certificate renewal deploy hook validated
+  [OK] Monit native SMTP alert delivery to local Postfix
+  [OK] Monit local-only Unix control socket / no TCP 2812
+  [OK] Monit resource checks
+  [OK] Monit service checks including Postfix/OpenDKIM/PostSRSd
+  [OK] daily health-report timer
   [OK] custom production MOTD
   [OK] deploy cross-write boundaries validated
+  [OK] hidden-path requests such as /.git/* and /.env return 404
+  [OK] no physical .git/config/.env exposure in deployed web trees
+  [OK] web-prod-01 SMTP A/PTR identity aligned
+  [OK] Postfix dual-role outbound + narrow inbound forwarding
+  [OK] PostSRSd installed and loopback-only
+  [OK] independent ADMIN_FORWARD_TARGET and CONTACT_FORWARD_TARGET
+  [OK] ADMIN_EMAIL canonicalized to admin@hiplingo.com
+  [OK] Monit alerts canonicalized to admin@hiplingo.com
+  [OK] monitoring sender display name is Hiplingo Server Monitor
+  [OK] explicit admin + business/public alias set (no catch-all)
+  [OK] unknown recipients rejected
+  [OK] unauthenticated external relay rejected
+  [OK] dedicated SMTP STARTTLS certificate
+  [OK] SMTP certificate Certbot deploy hook reloads Postfix
+  [OK] Nathan + Hiplingo root MX records
+  [OK] SRS MX + strict SPF record
+  [OK] external TCP/25 validation
+  [OK] external TLS 1.3 validation
+  [OK] representative end-to-end business + operations forwarding
+  [OK] SRS Return-Path observed
+  [OK] forwarded SPF PASS
+  [OK] original sender DKIM survived
+  [OK] final mail queue empty
 
 Still pending by design:
 
@@ -1290,3 +2783,41 @@ Still pending by design:
   [PENDING] real hiplingo.com frontend release
   [PENDING] metadata-editor published-media production sync
 
+MAIL / NGINX PRIMARY REFERENCES
+===============================
+
+Postfix overview:
+    https://www.postfix.org/OVERVIEW.html
+
+Postfix virtual alias domains:
+    https://www.postfix.org/VIRTUAL_README.html
+
+Postfix address classes / recipient validation:
+    https://www.postfix.org/ADDRESS_CLASS_README.html
+
+Postfix SMTP access / relay controls:
+    https://www.postfix.org/SMTPD_ACCESS_README.html
+
+Postfix configuration reference:
+    https://www.postfix.org/postconf.5.html
+
+PostSRSd upstream:
+    https://github.com/roehling/postsrsd
+
+Debian 13 PostSRSd package:
+    https://packages.debian.org/trixie/postsrsd
+
+SPF:
+    https://www.rfc-editor.org/info/rfc7208
+
+DMARC:
+    https://www.rfc-editor.org/info/rfc9989
+
+Google forwarding best practices:
+    https://support.google.com/mail/answer/175365
+
+Certbot:
+    https://eff-certbot.readthedocs.io/en/stable/using.html
+
+nginx request processing / location selection:
+    https://nginx.org/en/docs/http/request_processing.html
