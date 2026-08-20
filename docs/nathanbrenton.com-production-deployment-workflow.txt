@@ -96,6 +96,39 @@ Confirmation and stdin safety:
     SSH is stdin-disabled as defense in depth, but --yes is the supported
     noninteractive confirmation mechanism.
 
+Working-tree / deployment-source safety:
+
+    scripts/deploy.sh deploys the PUBLIC FILESYSTEM SOURCE containing the script;
+    it does not deploy only Git-staged files or only the most recent commit.
+
+    Before a normal deployment, inspect:
+
+        git status --short
+
+    Any modified public file in the deployment source is eligible to appear in
+    the rsync payload. Git staging is not a deployment boundary.
+
+    Preferred normal workflow:
+        - make the intended local public changes;
+        - commit/push them when appropriate;
+        - review the deploy.sh dry-run;
+        - require the dry-run to contain only intended public deltas.
+
+    Exceptional targeted-update workflow:
+        If the local working tree contains unrelated public edits, or production
+        intentionally differs from a clean Git snapshot, build a temporary
+        LIVE-BASED deployment source instead of deploying the dirty working tree.
+        Copy the current live release into that temporary source, make the source
+        root 0755, overlay only the intended committed public file(s), place the
+        current deploy.sh under the excluded scripts/ directory, and checksum
+        dry-run the temporary source against current production. Require the
+        proposed-vs-live delta to contain only the intended pathname(s) before
+        running deploy.sh from that temporary source.
+
+    A live-based source is a controlled exception for preserving known production
+    state during a targeted update. It must not be used to conceal unexplained
+    repository/production drift; reconcile that drift separately.
+
 Public release permission contract:
 
     local deployment source root    0755
@@ -167,7 +200,10 @@ Expected:
 
 Run on: LOCAL CLIENT
 
-    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+    cd ~/Desktop/websites/nathanbrenton.com
+
+Stop immediately if the directory change fails. Do not continue from a different
+working directory.
 
     REMOTE="nathan-prod"
     ROOT="/var/www/nathanbrenton.com"
@@ -504,7 +540,7 @@ Expected for each:
 SAFE TO PASTE: YES
 SHA-256 hashes of public files are safe to paste.
 
-    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+    cd ~/Desktop/websites/nathanbrenton.com
 
     printf 'local_index='
     shasum -a 256 index.html | awk '{print $1}'
@@ -622,7 +658,7 @@ Expected:
 
 Then repeat the live SHA-256 comparison:
 
-    cd ~/Desktop/websites/nathanbrenton.com || exit 1
+    cd ~/Desktop/websites/nathanbrenton.com
 
     printf 'local_index='
     shasum -a 256 index.html | awk '{print $1}'
@@ -640,22 +676,25 @@ Hashes must match exactly.
 For every future update:
 
     1. Make changes locally.
-    2. Verify SSH alias / current release if needed.
-    3. Set:
+    2. Inspect git status and confirm every modified PUBLIC source file is intended
+       for this deployment. If unrelated public edits exist, use the reviewed
+       live-based targeted-update workflow from Section 0 instead.
+    3. Verify SSH alias / current release if needed.
+    4. Set:
            CURRENT="$(ssh "$REMOTE" "readlink '$ROOT/current'")"
            LINK_DEST="$ROOT/$CURRENT"
            RELEASE="$(date -u +%Y%m%dT%H%M%SZ)"
-    4. Run rsync dry-run.
-    5. Inspect publication boundary.
-    6. Upload new release with --link-dest.
-    7. Validate staged release contents and public permissions.
-    8. Require staged directories 0755 and files 0644.
-    9. Run checksum dry-run; require no change lines.
-   10. Atomically promote.
-   11. Validate HTTPS endpoints.
-   12. Compare local/live index SHA-256.
-   13. Perform browser smoke test.
-   14. Keep at least the previous known-good release available for rollback.
+    5. Run rsync dry-run.
+    6. Inspect publication boundary.
+    7. Upload new release with --link-dest.
+    8. Validate staged release contents and public permissions.
+    9. Require staged directories 0755 and files 0644.
+   10. Run checksum dry-run; require no change lines.
+   11. Atomically promote.
+   12. Validate HTTPS endpoints.
+   13. Compare local/live index SHA-256.
+   14. Perform browser smoke test.
+   15. Keep at least the previous known-good release available for rollback.
 
 
 Rollback-script safety:
@@ -710,6 +749,9 @@ Do NOT:
     - publish source-assets/
     - publish .git/ or .gitignore
     - deploy from a 0700 temporary source root without first making it 0755
+    - assume Git staging limits the deployment payload; deploy.sh reads the source tree
+    - deploy a dirty public working tree when unrelated public edits are present
+    - pipe y/N answers into deploy.sh or rollback.sh; use --yes when unattended approval is intentional
     - delete the previous known-good release immediately after deployment
     - manually replace files during rollback
     - reload nginx just to switch releases

@@ -42,7 +42,10 @@ It intentionally avoids abandoned/backtracked approaches. In particular:
     security smell; explicitly return 404 for hidden paths.
 
 This runbook ends at the CURRENT VALIDATED SERVER-READY STATE.
-The following application/content operations remain intentionally separate:
+The following application/content operations remain intentionally separate from
+the base-server rebuild. They are deployed in current production, but after a
+fresh rebuild they must be performed only after the server-ready foundation has
+been validated:
 
   - real nathanbrenton.com site deployment
   - real hiplingo.com frontend deployment
@@ -382,6 +385,7 @@ Install only the packages needed for the validated stack:
       certbot \
       python3-certbot-nginx \
       fail2ban \
+      monit \
       unattended-upgrades \
       rsync \
       curl \
@@ -1083,18 +1087,17 @@ server {
         autoindex off;
     }
 
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+EOF_NGINX_HIP
 
 Public-media permission requirement:
     nginx/www-data is intentionally not a deployment-group member.
     The published tree must therefore be traversable/readable without group
     membership: directories 0755, files 0644. Unknown/binary .wfp files are
     expected to be served as application/octet-stream.
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF_NGINX_HIP
 
 Enable both and disable Debian's default site:
 
@@ -2637,12 +2640,16 @@ Remember: a 200 from bootstrap pages confirms server/TLS routing only. It does
 NOT mean the real Nathan/Hiplingo application content has been deployed.
 
 
-25. DO NOT PERFORM YET — REAL CONTENT DEPLOYMENTS
-=================================================
+25. POST-REBUILD — REAL CONTENT DEPLOYMENTS (SEPARATE)
+=======================================================
 
-The rebuild is complete at this point.
+The base-server rebuild is complete at this point. On a fresh rebuilt host, keep
+the following application/content deployments separate and perform them only
+after the server-readiness audit passes. Current production has already completed
+all three lifecycles; this section describes how they remain separated during a
+future rebuild.
 
-Keep the three pending production operations separate:
+Keep the three production operations separate:
 
 A. nathanbrenton.com
 
@@ -2655,6 +2662,21 @@ A. nathanbrenton.com
 
    Deployment identity:
      deploy-nathan
+
+   Canonical deployment tooling from the Nathan source tree:
+     ./scripts/deploy.sh
+     ./scripts/rollback.sh
+
+   Direct SSH calls inside those scripts use ssh -n so SSH cannot consume
+   confirmation input. Rsync is intentionally unchanged because it requires its
+   normal SSH data channel. Normal use is interactive. For explicitly unattended
+   approval use --yes; do not pipe y/N answers into either script.
+
+   deploy.sh deploys its filesystem source, not only Git-staged files. Review
+   git status and the rsync dry-run before upload. If unrelated public working-tree
+   edits exist, use the documented live-based targeted-update workflow from the
+   companion nathanbrenton.com production deployment workflow rather than
+   deploying the dirty source tree.
 
 B. Hiplingo frontend
 
@@ -2788,11 +2810,14 @@ A correctly rebuilt server now has:
   [OK] original sender DKIM survived
   [OK] final mail queue empty
 
-Still pending by design:
+Current production application/content checkpoint:
 
-  [PENDING] real nathanbrenton.com release
-  [PENDING] real hiplingo.com frontend release
-  [PENDING] metadata-editor published-media production sync
+  [DEPLOYED] real nathanbrenton.com release
+  [DEPLOYED] real hiplingo.com frontend release
+  [DEPLOYED] metadata-editor published-media production sync
+
+On a newly rebuilt host, these are still post-rebuild operations and remain
+undeployed until each independent lifecycle is explicitly executed and validated.
 
 MAIL / NGINX PRIMARY REFERENCES
 ===============================
