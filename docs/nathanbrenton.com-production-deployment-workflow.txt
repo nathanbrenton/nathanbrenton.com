@@ -51,11 +51,14 @@ Local source:
 Files/directories that must NOT be published:
 
     .git/
+    .gitignore
     .DS_Store
     .gitkeep
     README.md
     deploy/
     docs/
+    scripts/
+    source-assets/
 
 The public deployment includes the site files, assets, and public resume, e.g.:
 
@@ -65,6 +68,24 @@ The public deployment includes the site files, assets, and public resume, e.g.:
     styles.css
     assets/
     resume/Nathan-Brenton-Resume.pdf
+
+Preferred deployment entrypoint:
+
+    ./scripts/deploy.sh
+
+The manual commands below remain the canonical diagnostic/reference sequence, but
+the script enforces the same publication boundary and staged validation.
+
+Public release permission contract:
+
+    local deployment source root    0755
+    staged/live directories         0755
+    staged/live files               0644
+
+The deploy script refuses to run when its local source root is not 0755 and
+refuses promotion when any staged public path violates the 0755/0644 contract.
+This prevents an archive-mode rsync from propagating a private 0700 temporary
+directory mode into the nginx-served release root.
 
 
 ======================================================================
@@ -165,11 +186,14 @@ Output contains public filenames, paths, timestamps, and rsync indicators.
       --itemize-changes \
       --dry-run \
       --exclude='.git/' \
+      --exclude='.gitignore' \
       --exclude='.DS_Store' \
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
       --exclude='docs/' \
+      --exclude='scripts/' \
+      --exclude='source-assets/' \
       --link-dest="$LINK_DEST" \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
@@ -190,7 +214,10 @@ The dry run MUST NOT include:
     README.md
     deploy/
     docs/
+    scripts/
+    source-assets/
     .git/
+    .gitignore
     .DS_Store
     .gitkeep
 
@@ -215,11 +242,14 @@ This uploads the new release but does NOT change the live site.
       --itemize-changes \
       --stats \
       --exclude='.git/' \
+      --exclude='.gitignore' \
       --exclude='.DS_Store' \
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
       --exclude='docs/' \
+      --exclude='scripts/' \
+      --exclude='source-assets/' \
       --link-dest="$LINK_DEST" \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
@@ -302,7 +332,7 @@ SAFE TO PASTE: YES
 
 SAFE TO PASTE: YES
 
-    ssh "$REMOTE" "test ! -e '$ROOT/releases/$RELEASE/README.md' && test ! -e '$ROOT/releases/$RELEASE/deploy' && test ! -e '$ROOT/releases/$RELEASE/docs' && test ! -e '$ROOT/releases/$RELEASE/.git' && echo 'forbidden_files=absent'"
+    ssh "$REMOTE" "test ! -e '$ROOT/releases/$RELEASE/README.md' && test ! -e '$ROOT/releases/$RELEASE/deploy' && test ! -e '$ROOT/releases/$RELEASE/docs' && test ! -e '$ROOT/releases/$RELEASE/scripts' && test ! -e '$ROOT/releases/$RELEASE/source-assets' && test ! -e '$ROOT/releases/$RELEASE/.git' && test ! -e '$ROOT/releases/$RELEASE/.gitignore' && echo 'forbidden_files=absent'"
 
 Expected:
 
@@ -333,7 +363,26 @@ Expected:
     release_symlinks=none
 
 
-6F. Byte-for-byte comparison against local source
+6F. Confirm public permissions
+------------------------------
+
+SAFE TO PASTE: YES
+
+    ssh "$REMOTE" "R='$ROOT/releases/$RELEASE'; printf 'root_mode='; stat -c '%a' \"\$R\"; find \"\$R\" \( -type d ! -perm 0755 -o -type f ! -perm 0644 \) -printf '%m %y %P\n' | sort"
+
+Expected root mode:
+
+    root_mode=755
+
+Expected after that line:
+
+    No permission-violation lines.
+
+Every public directory must be exactly 0755 and every public file exactly 0644.
+Do not promote a staged release that fails this contract.
+
+
+6G. Byte-for-byte comparison against local source
 -------------------------------------------------
 
 SAFE TO PASTE: YES
@@ -346,11 +395,14 @@ SAFE TO PASTE: YES
       --no-owner \
       --no-group \
       --exclude='.git/' \
+      --exclude='.gitignore' \
       --exclude='.DS_Store' \
       --exclude='.gitkeep' \
       --exclude='README.md' \
       --exclude='deploy/' \
       --exclude='docs/' \
+      --exclude='scripts/' \
+      --exclude='source-assets/' \
       ./ \
       "$REMOTE:$ROOT/releases/$RELEASE/"
 
@@ -362,7 +414,7 @@ No output from the comparison means the staged public files match the local
 public source byte-for-byte.
 
 
-6G. Confirm production is still unchanged
+6H. Confirm production is still unchanged
 -----------------------------------------
 
 SAFE TO PASTE: YES
@@ -576,13 +628,26 @@ For every future update:
     4. Run rsync dry-run.
     5. Inspect publication boundary.
     6. Upload new release with --link-dest.
-    7. Validate staged release.
-    8. Run checksum dry-run; require no change lines.
-    9. Atomically promote.
-   10. Validate HTTPS endpoints.
-   11. Compare local/live index SHA-256.
-   12. Perform browser smoke test.
-   13. Keep at least the previous known-good release available for rollback.
+    7. Validate staged release contents and public permissions.
+    8. Require staged directories 0755 and files 0644.
+    9. Run checksum dry-run; require no change lines.
+   10. Atomically promote.
+   11. Validate HTTPS endpoints.
+   12. Compare local/live index SHA-256.
+   13. Perform browser smoke test.
+   14. Keep at least the previous known-good release available for rollback.
+
+
+Rollback-script safety:
+
+    ./scripts/rollback.sh
+
+selects the newest earlier release that passes the required-file, no-symlink,
+and 0755-directory/0644-file validation. Empty dry-run directories and incomplete
+or unsafe releases are skipped rather than selected as rollback targets.
+
+The deploy script also removes an empty timestamped release directory when a
+dry-run is reviewed and the upload prompt is declined.
 
 
 ======================================================================
@@ -621,7 +686,10 @@ Do NOT:
     - publish README.md
     - publish deploy/
     - publish docs/
-    - publish .git/
+    - publish scripts/
+    - publish source-assets/
+    - publish .git/ or .gitignore
+    - deploy from a 0700 temporary source root without first making it 0755
     - delete the previous known-good release immediately after deployment
     - manually replace files during rollback
     - reload nginx just to switch releases

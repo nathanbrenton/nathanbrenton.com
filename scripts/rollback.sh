@@ -25,6 +25,25 @@ confirm() {
   [[ "$reply" == "y" || "$reply" == "Y" ]]
 }
 
+release_is_valid() {
+  local release="$1"
+
+  ssh "$REMOTE" "\
+    R='$REMOTE_ROOT/releases/$release'; \
+    test -d \"\$R\" && \
+    test \"\$(stat -c '%a' \"\$R\")\" = '755' && \
+    test -f \"\$R/index.html\" && \
+    test -f \"\$R/script.js\" && \
+    test -f \"\$R/site-data.js\" && \
+    test -f \"\$R/styles.css\" && \
+    test -f \"\$R/resume/Nathan-Brenton-Resume.pdf\" && \
+    ! find \"\$R\" -type l -print -quit | grep -q . && \
+    ! find \"\$R\" \\( \
+      -type d ! -perm 0755 -o \
+      -type f ! -perm 0644 \
+    \\) -print -quit | grep -q ."
+}
+
 usage() {
   cat <<'EOF_USAGE'
 Usage: rollback.sh [-y|--yes]
@@ -106,20 +125,25 @@ while IFS= read -r release; do
     break
   fi
 
-  PREVIOUS="$release"
+  if release_is_valid "$release"; then
+    PREVIOUS="$release"
+  else
+    printf 'skipping_invalid_release=%s\n' "$release"
+  fi
 done < <(
   ssh "$REMOTE" \
     "find '$REMOTE_ROOT/releases' -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | sort"
 )
 
 [[ -n "$PREVIOUS" ]] ||
-  fail "no earlier release exists before $CURRENT_NAME"
+  fail "no earlier valid release exists before $CURRENT_NAME"
 
-ssh "$REMOTE" "test -d '$REMOTE_ROOT/releases/$PREVIOUS'" ||
-  fail "rollback target does not exist"
+release_is_valid "$PREVIOUS" ||
+  fail "rollback target failed validation"
 
 printf 'current_release=%s\n' "$CURRENT_NAME"
 printf 'rollback_target=%s\n' "$PREVIOUS"
+printf 'rollback_target_validation=PASS\n'
 
 
 printf '\n===== 4. CONFIRM ROLLBACK =====\n'

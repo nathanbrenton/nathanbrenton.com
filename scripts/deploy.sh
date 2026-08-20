@@ -23,6 +23,16 @@ fail() {
   exit 1
 }
 
+local_mode() {
+  local path="$1"
+
+  if stat -f '%Lp' "$path" >/dev/null 2>&1; then
+    stat -f '%Lp' "$path"
+  else
+    stat -c '%a' "$path"
+  fi
+}
+
 confirm() {
   local prompt="$1"
   local reply
@@ -63,7 +73,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-for cmd in ssh rsync curl; do
+for cmd in ssh rsync curl stat; do
   command -v "$cmd" >/dev/null 2>&1 ||
     fail "required command not found: $cmd"
 done
@@ -81,6 +91,20 @@ else
 fi
 
 cd "$LOCAL_ROOT"
+
+printf '\n===== 0. VERIFY LOCAL PUBLIC SOURCE =====\n'
+
+LOCAL_ROOT_MODE="$(local_mode "$LOCAL_ROOT")"
+
+printf 'local_root=%s\nlocal_root_mode=%s\n' \
+  "$LOCAL_ROOT" \
+  "$LOCAL_ROOT_MODE"
+
+[[ "$LOCAL_ROOT_MODE" == "755" ]] ||
+  fail "local deployment source root must be mode 755; found $LOCAL_ROOT_MODE (run: chmod 755 '$LOCAL_ROOT')"
+
+printf 'local_root_permissions=PASS\n'
+
 
 printf '\n===== 1. VERIFY SSH CONNECTION =====\n'
 
@@ -143,6 +167,14 @@ rsync -a \
 printf '\nReview the dry-run above carefully.\n'
 
 confirm "Upload this staged release?" || {
+  ssh "$REMOTE" "\
+    R='$REMOTE_ROOT/releases/$RELEASE'; \
+    if [ -d \"\$R\" ] && \
+       ! find \"\$R\" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then \
+      rmdir \"\$R\"; \
+    fi" || fail "could not clean empty dry-run release"
+
+  printf 'empty_dry_run_release_cleanup=done\n'
   printf 'Deployment cancelled before upload.\n'
   exit 0
 }
@@ -188,12 +220,15 @@ ssh "$REMOTE" \
 printf '\n----- Forbidden files -----\n'
 
 ssh "$REMOTE" "\
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/README.md' && \
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/deploy' && \
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/docs' && \
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/scripts' && \
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/.git' && \
-  test ! -e '$REMOTE_ROOT/releases/$RELEASE/.gitignore'" ||
+  R='$REMOTE_ROOT/releases/$RELEASE'; \
+  test ! -e \"\$R/README.md\" && \
+  test ! -e \"\$R/deploy\" && \
+  test ! -e \"\$R/docs\" && \
+  test ! -e \"\$R/scripts\" && \
+  test ! -e \"\$R/source-assets\" && \
+  test ! -e \"\$R/.git\" && \
+  test ! -e \"\$R/.gitignore\" && \
+  ! find \"\$R\" \\( -name '.DS_Store' -o -name '.gitkeep' \\) -print -quit | grep -q ." ||
   fail "forbidden file or directory found in staged release"
 
 printf 'forbidden_files=absent\n'
@@ -225,6 +260,35 @@ then
 fi
 
 printf 'release_symlinks=none\n'
+
+
+printf '\n----- Public permissions -----\n'
+
+STAGED_ROOT_MODE="$(
+  ssh "$REMOTE" \
+    "stat -c '%a' '$REMOTE_ROOT/releases/$RELEASE'"
+)"
+
+printf 'staged_root_mode=%s\n' "$STAGED_ROOT_MODE"
+
+[[ "$STAGED_ROOT_MODE" == "755" ]] ||
+  fail "staged release root must be mode 755; found $STAGED_ROOT_MODE"
+
+PERMISSION_VIOLATIONS="$(
+  ssh "$REMOTE" "\
+    R='$REMOTE_ROOT/releases/$RELEASE'; \
+    find \"\$R\" \\( \
+      -type d ! -perm 0755 -o \
+      -type f ! -perm 0644 \
+    \\) -printf '%m %y %P\\n' | sort"
+)"
+
+if [[ -n "$PERMISSION_VIOLATIONS" ]]; then
+  printf '%s\n' "$PERMISSION_VIOLATIONS"
+  fail "staged release contains unsafe public permissions"
+fi
+
+printf 'public_permissions=PASS\n'
 
 
 printf '\n----- Byte-for-byte comparison -----\n'

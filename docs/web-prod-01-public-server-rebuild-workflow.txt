@@ -2659,10 +2659,13 @@ A. nathanbrenton.com
 B. Hiplingo frontend
 
    Canonical local source:
-     ~/Desktop/record-label/audio-player/
+     ~/Desktop/record-label/hiplingo.com/
 
-   Future build source:
-     audio-player/dist/
+   Build command:
+     cd ~/Desktop/record-label/hiplingo.com && npm run build
+
+   Build output / deployment source:
+     ~/Desktop/record-label/hiplingo.com/dist/
 
    Future destination model:
      /var/www/hiplingo.com/app/releases/<timestamp>/
@@ -2706,6 +2709,14 @@ C. Metadata-editor sanitized public media
 
 Frontend release deployment/rollback must never erase or roll back
 published-media. The two lifecycles are intentionally decoupled.
+
+Frontend public-release mode contract:
+     directories 0755
+     files       0644
+
+Validate those modes on every staged frontend release before atomically moving
+its current symlink. In particular, do not allow archive-mode rsync to propagate
+a private 0700 temporary source-root mode into an nginx-served release root.
 
 
 REBUILD COMPLETE — TARGET STATE
