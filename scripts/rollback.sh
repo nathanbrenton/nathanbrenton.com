@@ -28,7 +28,7 @@ confirm() {
 release_is_valid() {
   local release="$1"
 
-  ssh "$REMOTE" "\
+  ssh -n "$REMOTE" "\
     R='$REMOTE_ROOT/releases/$release'; \
     test -d \"\$R\" && \
     test \"\$(stat -c '%a' \"\$R\")\" = '755' && \
@@ -89,8 +89,8 @@ fi
 
 printf '\n===== 1. VERIFY SSH CONNECTION =====\n'
 
-SSH_HOST="$(ssh "$REMOTE" 'hostname')"
-SSH_USER="$(ssh "$REMOTE" 'whoami')"
+SSH_HOST="$(ssh -n "$REMOTE" 'hostname')"
+SSH_USER="$(ssh -n "$REMOTE" 'whoami')"
 
 printf 'ssh_verified=yes\nhost=%s\nuser=%s\n' "$SSH_HOST" "$SSH_USER"
 
@@ -103,14 +103,14 @@ printf 'ssh_verified=yes\nhost=%s\nuser=%s\n' "$SSH_HOST" "$SSH_USER"
 
 printf '\n===== 2. IDENTIFY CURRENT RELEASE =====\n'
 
-CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 [[ "$CURRENT" == releases/* ]] ||
   fail "unexpected current symlink target: $CURRENT"
 
 CURRENT_NAME="${CURRENT#releases/}"
 
-ssh "$REMOTE" "test -d '$REMOTE_ROOT/releases/$CURRENT_NAME'" ||
+ssh -n "$REMOTE" "test -d '$REMOTE_ROOT/releases/$CURRENT_NAME'" ||
   fail "current release directory does not exist"
 
 printf 'current=%s\n' "$CURRENT"
@@ -131,7 +131,7 @@ while IFS= read -r release; do
     printf 'skipping_invalid_release=%s\n' "$release"
   fi
 done < <(
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "find '$REMOTE_ROOT/releases' -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | sort"
 )
 
@@ -156,7 +156,7 @@ confirm "Rollback production from $CURRENT_NAME to $PREVIOUS?" || {
 
 printf '\n===== 5. ATOMIC ROLLBACK =====\n'
 
-ssh "$REMOTE" "\
+ssh -n "$REMOTE" "\
   ROOT='$REMOTE_ROOT'; \
   TARGET='$PREVIOUS'; \
   OLD=\$(readlink \"\$ROOT/current\") || exit 1; \
@@ -168,7 +168,7 @@ ssh "$REMOTE" "\
     \"\$(readlink \"\$ROOT/current\")\""
 
 ROLLED_BACK_CURRENT="$(
-  ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'"
+  ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'"
 )"
 
 [[ "$ROLLED_BACK_CURRENT" == "releases/$PREVIOUS" ]] ||
@@ -184,7 +184,7 @@ for file in \
   styles.css \
   resume/Nathan-Brenton-Resume.pdf
 do
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "test -f '$REMOTE_ROOT/releases/$PREVIOUS/$file'" ||
     fail "required file missing after rollback: $file"
 done
@@ -213,7 +213,7 @@ done
 printf '\n----- Confirm live index matches rollback release -----\n'
 
 REMOTE_INDEX_HASH="$(
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "sha256sum '$REMOTE_ROOT/releases/$PREVIOUS/index.html' | awk '{print \$1}'"
 )"
 
@@ -240,7 +240,7 @@ printf '\n'
 
 if confirm "Delete rolled-back release $CURRENT_NAME from the server?"; then
   STILL_CURRENT="$(
-    ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'"
+    ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'"
   )"
 
   [[ "$STILL_CURRENT" == "releases/$PREVIOUS" ]] ||
@@ -249,10 +249,10 @@ if confirm "Delete rolled-back release $CURRENT_NAME from the server?"; then
   [[ "$CURRENT_NAME" != "$PREVIOUS" ]] ||
     fail "cleanup target unexpectedly equals current release"
 
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "rm -rf -- '$REMOTE_ROOT/releases/$CURRENT_NAME'"
 
-  if ssh "$REMOTE" \
+  if ssh -n "$REMOTE" \
     "test -e '$REMOTE_ROOT/releases/$CURRENT_NAME'"
   then
     fail "rolled-back release still exists after cleanup"

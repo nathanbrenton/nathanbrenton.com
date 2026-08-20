@@ -76,6 +76,26 @@ Preferred deployment entrypoint:
 The manual commands below remain the canonical diagnostic/reference sequence, but
 the script enforces the same publication boundary and staged validation.
 
+Confirmation and stdin safety:
+
+    scripts/deploy.sh and scripts/rollback.sh use ssh -n for their direct SSH
+    inspection, validation, and mutation calls. Rsync is intentionally left
+    unchanged so its SSH transport retains the data channel it requires.
+
+    Normal use remains interactive:
+
+        ./scripts/deploy.sh
+        ./scripts/rollback.sh
+
+    Both scripts also support --yes for explicitly unattended confirmation.
+    deploy.sh --yes confirms both upload and atomic promotion. rollback.sh --yes
+    confirms both rollback and the optional deletion of the rolled-back release.
+    Use --yes only when those complete actions are intentionally approved.
+
+    Do not automate the y/N prompts by piping answers into either script. Direct
+    SSH is stdin-disabled as defense in depth, but --yes is the supported
+    noninteractive confirmation mechanism.
+
 Public release permission contract:
 
     local deployment source root    0755

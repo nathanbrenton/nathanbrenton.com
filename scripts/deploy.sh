@@ -108,8 +108,8 @@ printf 'local_root_permissions=PASS\n'
 
 printf '\n===== 1. VERIFY SSH CONNECTION =====\n'
 
-SSH_HOST="$(ssh "$REMOTE" 'hostname')"
-SSH_USER="$(ssh "$REMOTE" 'whoami')"
+SSH_HOST="$(ssh -n "$REMOTE" 'hostname')"
+SSH_USER="$(ssh -n "$REMOTE" 'whoami')"
 
 printf 'ssh_verified=yes\nhost=%s\nuser=%s\n' "$SSH_HOST" "$SSH_USER"
 
@@ -122,7 +122,7 @@ printf 'ssh_verified=yes\nhost=%s\nuser=%s\n' "$SSH_HOST" "$SSH_USER"
 
 printf '\n===== 2. VERIFY CURRENT PRODUCTION RELEASE =====\n'
 
-CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 [[ "$CURRENT" == releases/* ]] ||
   fail "unexpected current symlink target: $CURRENT"
@@ -131,7 +131,7 @@ LINK_DEST="$REMOTE_ROOT/$CURRENT"
 
 printf 'current=%s\n' "$CURRENT"
 
-ssh "$REMOTE" "test -d '$LINK_DEST'" ||
+ssh -n "$REMOTE" "test -d '$LINK_DEST'" ||
   fail "current release target does not exist: $LINK_DEST"
 
 printf 'current_target_exists=yes\n'
@@ -145,7 +145,7 @@ printf 'current=%s\n' "$CURRENT"
 printf 'link_dest=%s\n' "$LINK_DEST"
 printf 'new_release=%s\n' "$RELEASE"
 
-ssh "$REMOTE" "test -d '$LINK_DEST'" ||
+ssh -n "$REMOTE" "test -d '$LINK_DEST'" ||
   fail "link-dest does not exist"
 
 printf 'link_dest_exists=yes\n'
@@ -167,7 +167,7 @@ rsync -a \
 printf '\nReview the dry-run above carefully.\n'
 
 confirm "Upload this staged release?" || {
-  ssh "$REMOTE" "\
+  ssh -n "$REMOTE" "\
     R='$REMOTE_ROOT/releases/$RELEASE'; \
     if [ -d \"\$R\" ] && \
        ! find \"\$R\" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then \
@@ -195,7 +195,7 @@ rsync -a \
 
 printf 'uploaded_release=%s\n' "$RELEASE"
 
-AFTER_UPLOAD_CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+AFTER_UPLOAD_CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 printf 'current=%s\n' "$AFTER_UPLOAD_CURRENT"
 
@@ -205,7 +205,7 @@ printf 'current=%s\n' "$AFTER_UPLOAD_CURRENT"
 
 printf '\n===== 6. VALIDATE STAGED RELEASE =====\n'
 
-ssh "$REMOTE" "test -d '$REMOTE_ROOT/releases/$RELEASE'" ||
+ssh -n "$REMOTE" "test -d '$REMOTE_ROOT/releases/$RELEASE'" ||
   fail "staged release missing"
 
 printf 'release_exists=yes\n'
@@ -213,13 +213,13 @@ printf 'release_exists=yes\n'
 
 printf '\n----- Remote file inventory -----\n'
 
-ssh "$REMOTE" \
+ssh -n "$REMOTE" \
   "find '$REMOTE_ROOT/releases/$RELEASE' -type f -printf '%P\n' | sort"
 
 
 printf '\n----- Forbidden files -----\n'
 
-ssh "$REMOTE" "\
+ssh -n "$REMOTE" "\
   R='$REMOTE_ROOT/releases/$RELEASE'; \
   test ! -e \"\$R/README.md\" && \
   test ! -e \"\$R/deploy\" && \
@@ -243,7 +243,7 @@ for file in \
   styles.css \
   resume/Nathan-Brenton-Resume.pdf
 do
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "test -f '$REMOTE_ROOT/releases/$RELEASE/$file'" ||
     fail "required public file missing: $file"
 done
@@ -253,7 +253,7 @@ printf 'required_files=present\n'
 
 printf '\n----- Release symlinks -----\n'
 
-if ssh "$REMOTE" \
+if ssh -n "$REMOTE" \
   "find '$REMOTE_ROOT/releases/$RELEASE' -type l -print -quit | grep -q ."
 then
   fail "release_symlinks=FOUND"
@@ -265,7 +265,7 @@ printf 'release_symlinks=none\n'
 printf '\n----- Public permissions -----\n'
 
 STAGED_ROOT_MODE="$(
-  ssh "$REMOTE" \
+  ssh -n "$REMOTE" \
     "stat -c '%a' '$REMOTE_ROOT/releases/$RELEASE'"
 )"
 
@@ -275,7 +275,7 @@ printf 'staged_root_mode=%s\n' "$STAGED_ROOT_MODE"
   fail "staged release root must be mode 755; found $STAGED_ROOT_MODE"
 
 PERMISSION_VIOLATIONS="$(
-  ssh "$REMOTE" "\
+  ssh -n "$REMOTE" "\
     R='$REMOTE_ROOT/releases/$RELEASE'; \
     find \"\$R\" \\( \
       -type d ! -perm 0755 -o \
@@ -314,7 +314,7 @@ fi
 printf 'checksum_comparison=clean\n'
 
 
-STILL_CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+STILL_CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 printf 'current=%s\n' "$STILL_CURRENT"
 
@@ -332,7 +332,7 @@ confirm "Atomically promote this release to production?" || {
 
 printf '\n===== 7. ATOMIC PROMOTION =====\n'
 
-ssh "$REMOTE" "\
+ssh -n "$REMOTE" "\
   ROOT='$REMOTE_ROOT'; \
   RELEASE='$RELEASE'; \
   OLD=\$(readlink \"\$ROOT/current\") || exit 1; \
@@ -343,7 +343,7 @@ ssh "$REMOTE" "\
     \"\$OLD\" \
     \"\$(readlink \"\$ROOT/current\")\""
 
-PROMOTED_CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+PROMOTED_CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 [[ "$PROMOTED_CURRENT" == "releases/$RELEASE" ]] ||
   fail "promotion did not point current at releases/$RELEASE"
@@ -385,7 +385,7 @@ printf 'live_index=%s\n' "$LIVE_INDEX_HASH"
   fail "live index.html does not match local source"
 
 
-FINAL_CURRENT="$(ssh "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
+FINAL_CURRENT="$(ssh -n "$REMOTE" "readlink '$REMOTE_ROOT/current'")"
 
 printf 'current=%s\n' "$FINAL_CURRENT"
 
