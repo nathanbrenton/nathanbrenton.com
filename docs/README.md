@@ -5,7 +5,7 @@ nathanbrenton.com website deployment workflow.
 
 ## Authoritative documents
 
-### `web-prod-01-production-rebuild-runbook-20260824-alerting-v1.txt`
+### `web-prod-01-production-rebuild-runbook-20260825-weekly-digest.txt`
 
 Authoritative machine rebuild / operations runbook for `web-prod-01`.
 
@@ -17,16 +17,29 @@ Covers:
 - nginx and TLS;
 - Postfix/OpenDKIM/PostSRSd;
 - operational/business mail boundaries;
-- daily health report;
 - Monit;
 - node_exporter;
 - Prometheus;
 - Grafana;
 - Blackbox Exporter;
 - Alertmanager;
-- 16 production Prometheus alert rules;
+- Daily Server Health Report v2;
+- Weekly Operations Digest;
+- 18 production Prometheus alert rules;
+- node_exporter systemd collector integration;
 - independent Monit observability watchdog;
-- final audits.
+- final operational audits.
+
+Completed observability/reporting milestones:
+
+- Observability v1;
+- Alerting v1;
+- Daily Server Health Report v2;
+- Weekly Operations Digest.
+
+Next recommended observability milestone:
+
+- Grafana Alloy + Loki.
 
 ### `nathanbrenton.com-production-deployment-workflow.txt`
 
@@ -47,10 +60,14 @@ Hiplingo publication/media deployment belongs in:
 
 ## Superseded historical docs
 
-Once their unique content has been confirmed merged into the authoritative
-rebuild runbook, older server/mail/rebuild documents should be archived or
-removed from the active documentation set rather than maintained as competing
-sources of truth.
+The previous authoritative runbook:
+
+`web-prod-01-production-rebuild-runbook-20260825-daily-report-v2.txt`
+
+is superseded by the Weekly Operations Digest revision.
+
+Older server/mail/rebuild documentation should remain archived rather than
+maintained as competing active sources of truth.
 
 ## Publication boundary
 
