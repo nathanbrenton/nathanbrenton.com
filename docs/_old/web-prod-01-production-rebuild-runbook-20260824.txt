@@ -1,6 +1,6 @@
-WEB-PROD-01 — PUBLIC CONTACT MAIL + OUTBOUND OPERATIONS + SERVER MONITORING RUNBOOK
+WEB-PROD-01 — PRODUCTION REBUILD + MAIL + WEB + OBSERVABILITY RUNBOOK
 ====================================================================================
-Updated: 2026-08-19 (America/Los_Angeles)
+Updated: 2026-08-24 (America/Los_Angeles)
 Target: Debian 13 (trixie)
 Host:   web-prod-01
 FQDN:   web-prod-01.nathanbrenton.com
@@ -8,8 +8,14 @@ Public IPv4: 45.32.88.137
 
 PURPOSE
 -------
-Clean, known-good walkthrough for the production email and server-monitoring
-stack on web-prod-01.
+Clean, known-good walkthrough for rebuilding and validating the production
+web, Hiplingo deployment boundary, mail, watchdog monitoring, and historical
+observability stack on web-prod-01.
+
+The 2026-08-24 revision preserves the previously validated mail/Monit/media
+architecture and adds the complete node_exporter + Prometheus + Grafana +
+Blackbox Exporter v1 build, dashboard specification, security boundaries,
+validation steps, and current authoritative checkpoint.
 
 This runbook now covers TWO deliberately independent mail roles:
 
@@ -30,6 +36,63 @@ This document intentionally emphasizes final architecture, why each mail
 technology is present, validated behaviors, safe rebuild/maintenance checks,
 and operational boundaries. Troubleshooting detours are omitted except where
 they explain an important security property.
+
+
+
+REBUILD ORDER — USE THIS SEQUENCE ON THE NEXT SERVER BUILD
+----------------------------------------------------------
+This document is both a current-state record and a rebuild guide.
+
+For a clean replacement of web-prod-01, build in this order so that each layer
+can be validated before the next layer depends on it:
+
+    1. Debian 13 base host, identity, SSH, nftables, time/DNS.
+    2. nginx + public web roots + hidden-path hardening.
+    3. Hiplingo application/media deployment identities and filesystem
+       boundaries.
+    4. Postfix + OpenDKIM + PostSRSd + mail DNS/TLS/routing.
+    5. server-health-report systemd service/timer.
+    6. Monit local watchdog and native-SMTP alert delivery.
+    7. node_exporter on loopback TCP/9100.
+    8. Prometheus on loopback TCP/9090.
+    9. Grafana OSS on loopback TCP/3000 with Prometheus datasource.
+   10. Blackbox Exporter on loopback TCP/9115.
+   11. Prometheus blackbox_https scrape job for both public websites.
+   12. Rebuild the 34-panel "web-prod-01 - Operations" Grafana dashboard.
+   13. Run the final validation checkpoints in this runbook.
+   14. Only after the above is stable, proceed to the NEXT milestone:
+       Prometheus alert rules + Alertmanager.
+
+Do not expose Grafana, Prometheus, node_exporter, or Blackbox Exporter directly
+to the public Internet. Administration remains through SSH/local forwarding.
+
+OBSERVABILITY V1 COMMISSIONING NOTE — 2026-08-24
+-------------------------------------------------
+This revision adds the complete first-generation historical observability
+stack that was commissioned after the original 2026-08-19 mail/Monit runbook:
+
+    node_exporter 1.12.1
+        -> host, filesystem, network, disk, process, vmstat, systemd metrics
+
+    Prometheus 3.13.2 LTS
+        -> 30-second host scrape/evaluation
+        -> local TSDB
+        -> 180-day / 2-GB retention ceiling
+        -> 60-second website blackbox probes
+
+    Grafana OSS 13.2.0
+        -> private localhost UI
+        -> provisioned Prometheus datasource
+        -> 34-panel operations dashboard
+
+    prometheus-blackbox-exporter 0.26.0 (Debian package)
+        -> HTTPS availability
+        -> total probe duration
+        -> TLS certificate expiry
+
+Monit is intentionally RETAINED. It provides a small, independent local
+watchdog and immediate mail path. Prometheus/Grafana provide historical
+telemetry and analysis. They solve different operational problems.
 
 
 ARCHITECTURE
@@ -2663,6 +2726,2012 @@ systemd sandboxing:
 
 nginx request/location processing:
     https://nginx.org/en/docs/http/request_processing.html
+======================================================================
+27. OBSERVABILITY V1 — ARCHITECTURE / CURRENT PRODUCTION STATE
+======================================================================
+
+Purpose
+-------
+The v1 observability layer adds historical metrics and public HTTPS probing
+without replacing the existing daily health-report or Monit watchdog.
+
+Data flow:
+
+    Linux / systemd
+         |
+         v
+    node_exporter
+    127.0.0.1:9100
+         |
+         | scrape every 30s
+         v
+    Prometheus
+    127.0.0.1:9090
+         |
+         +------------------------------+
+         |                              |
+         | datasource                   | scrape /probe every 60s
+         v                              v
+    Grafana OSS                   Blackbox Exporter
+    127.0.0.1:3000                127.0.0.1:9115
+                                        |
+                                        +--> https://hiplingo.com/
+                                        |
+                                        `--> https://nathanbrenton.com/
+
+Administrative access:
+
+    Mac/local workstation
+         |
+         | SSH local port forwarding
+         v
+    127.0.0.1:3000 on workstation
+         |
+         v
+    127.0.0.1:3000 on web-prod-01
+
+Current commissioned versions
+-----------------------------
+
+    Debian:                       13 (trixie)
+    node_exporter:                1.12.1
+    Prometheus:                   3.13.2 LTS
+    Grafana OSS:                  13.2.0
+    prometheus-blackbox-exporter: 0.26.0-1 (Debian package)
+
+Current private listeners
+-------------------------
+
+    127.0.0.1:3000    Grafana
+    127.0.0.1:9090    Prometheus
+    127.0.0.1:9100    node_exporter
+    127.0.0.1:9115    Blackbox Exporter
+
+These ports are intentionally NOT public nftables services.
+
+The public firewall continues to expose only the services documented earlier,
+including TCP 22/25/80/443.
+
+Quick validation:
+
+    sudo ss -lntp |
+      grep -E ':(3000|9090|9100|9115)[[:space:]]'
+
+Healthy state:
+    all four listeners show 127.0.0.1, never *:PORT or 0.0.0.0:PORT.
+
+
+======================================================================
+28. NODE_EXPORTER 1.12.1 — HOST + SYSTEMD METRICS
+======================================================================
+
+Why it exists
+-------------
+node_exporter supplies Prometheus with Linux host metrics:
+
+    CPU
+    load
+    RAM / swap
+    filesystems / inodes
+    block-device I/O
+    network
+    process counts
+    vmstat
+    boot time
+    systemd unit state/start/restart/timer metrics
+
+The systemd collector is explicitly enabled because it is disabled by default.
+
+Current upstream Linux AMD64 artifact
+-------------------------------------
+
+    node_exporter-1.12.1.linux-amd64.tar.gz
+    SHA256:
+    b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+
+For an exact rebuild, verify the downloaded archive before installation.
+
+Example:
+
+    VERSION=1.12.1
+    ARCHIVE="node_exporter-${VERSION}.linux-amd64.tar.gz"
+
+    cd /tmp
+
+    curl -fLO \
+      "https://github.com/prometheus/node_exporter/releases/download/v${VERSION}/${ARCHIVE}"
+
+    printf '%s  %s\n' \
+      'b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63' \
+      "$ARCHIVE" |
+      sha256sum -c -
+
+Create the service identity and versioned installation directory:
+
+    sudo useradd \
+      --system \
+      --no-create-home \
+      --shell /usr/sbin/nologin \
+      node_exporter 2>/dev/null || true
+
+    tar -xzf "$ARCHIVE"
+
+    sudo install -d \
+      -o root -g root -m 0755 \
+      "/opt/node_exporter/${VERSION}"
+
+    sudo install \
+      -o root -g root -m 0755 \
+      "node_exporter-${VERSION}.linux-amd64/node_exporter" \
+      "/opt/node_exporter/${VERSION}/node_exporter"
+
+    sudo ln -sfn \
+      "/opt/node_exporter/${VERSION}/node_exporter" \
+      /usr/local/bin/node_exporter
+
+Systemd requirements
+--------------------
+The exact unit may contain additional sandboxing, but these functional
+arguments are REQUIRED for the current dashboard:
+
+    --web.listen-address=127.0.0.1:9100
+    --collector.systemd
+    --collector.systemd.enable-restarts-metrics
+    --collector.systemd.enable-start-time-metrics
+
+The systemd unit filter must include at least:
+
+    nginx.service
+    postfix.service
+    opendkim.service
+    monit.service
+    fail2ban.service
+    nftables.service
+    ssh.service
+    postsrsd.service
+    server-health-report.service
+    server-health-report.timer
+
+A rebuild-friendly unit skeleton:
+
+    /etc/systemd/system/node_exporter.service
+
+    [Unit]
+    Description=Prometheus Node Exporter
+    Wants=network-online.target
+    After=network-online.target
+
+    [Service]
+    User=node_exporter
+    Group=node_exporter
+    Type=simple
+    ExecStart=/usr/local/bin/node_exporter \
+      --web.listen-address=127.0.0.1:9100 \
+      --collector.systemd \
+      --collector.systemd.enable-restarts-metrics \
+      --collector.systemd.enable-start-time-metrics \
+      --collector.systemd.unit-include='(nginx|postfix|opendkim|monit|fail2ban|nftables|ssh|postsrsd|server-health-report)\.(service|timer)'
+    Restart=on-failure
+    RestartSec=5s
+
+    # Keep exporter privilege low. Apply/retain systemd sandboxing after
+    # confirming /proc, /sys and systemd D-Bus metrics remain readable.
+    NoNewPrivileges=true
+    ProtectHome=true
+    PrivateTmp=true
+
+    [Install]
+    WantedBy=multi-user.target
+
+Then:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now node_exporter
+
+Validate:
+
+    /usr/local/bin/node_exporter --version
+
+    systemctl is-enabled node_exporter
+    systemctl is-active node_exporter
+
+    sudo ss -lntp | grep ':9100'
+
+    curl -fsS http://127.0.0.1:9100/metrics |
+      grep -E '^node_(cpu_seconds_total|memory_MemAvailable_bytes|systemd_unit_state)' |
+      head
+
+Systemd-specific validation:
+
+    curl -fsS http://127.0.0.1:9100/metrics |
+      grep -E '^node_systemd_(unit_state|service_restart_total|unit_start_time_seconds|timer_last_trigger_seconds)' |
+      head -40
+
+
+======================================================================
+29. PROMETHEUS 3.13.2 LTS — LOCAL TSDB + SCRAPING
+======================================================================
+
+Why this version was used
+-------------------------
+Production was commissioned on Prometheus 3.13.2 LTS. An exact rebuild should
+prefer the same validated LTS version unless an intentional upgrade is being
+performed and separately validated.
+
+Current Linux AMD64 artifact
+----------------------------
+
+    prometheus-3.13.2.linux-amd64.tar.gz
+    SHA256:
+    0e8c4d46101bd025ea8265e377d2caabc57f488fc1be1c367f37db69ea41be6f
+
+Example exact-version installation:
+
+    VERSION=3.13.2
+    ARCHIVE="prometheus-${VERSION}.linux-amd64.tar.gz"
+
+    cd /tmp
+
+    curl -fLO \
+      "https://github.com/prometheus/prometheus/releases/download/v${VERSION}/${ARCHIVE}"
+
+    printf '%s  %s\n' \
+      '0e8c4d46101bd025ea8265e377d2caabc57f488fc1be1c367f37db69ea41be6f' \
+      "$ARCHIVE" |
+      sha256sum -c -
+
+    sudo useradd \
+      --system \
+      --no-create-home \
+      --shell /usr/sbin/nologin \
+      prometheus 2>/dev/null || true
+
+    tar -xzf "$ARCHIVE"
+
+    sudo install -d \
+      -o root -g root -m 0755 \
+      "/opt/prometheus/${VERSION}"
+
+    sudo cp -a \
+      "prometheus-${VERSION}.linux-amd64/." \
+      "/opt/prometheus/${VERSION}/"
+
+    sudo ln -sfn \
+      "/opt/prometheus/${VERSION}/prometheus" \
+      /usr/local/bin/prometheus
+
+    sudo ln -sfn \
+      "/opt/prometheus/${VERSION}/promtool" \
+      /usr/local/bin/promtool
+
+    sudo install -d \
+      -o prometheus -g prometheus -m 0755 \
+      /var/lib/prometheus
+
+    sudo install -d \
+      -o root -g prometheus -m 0750 \
+      /etc/prometheus
+
+Prometheus configuration
+------------------------
+Authoritative file:
+
+    /etc/prometheus/prometheus.yml
+
+Current logical configuration after Blackbox was added:
+
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+
+    storage:
+      tsdb:
+        retention:
+          time: 180d
+          size: 2GB
+
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets:
+              - 127.0.0.1:9090
+            labels:
+              host: web-prod-01
+
+      - job_name: 'node'
+        static_configs:
+          - targets:
+              - 127.0.0.1:9100
+            labels:
+              host: web-prod-01
+
+      - job_name: 'blackbox_https'
+        scrape_interval: 60s
+        scrape_timeout: 10s
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        static_configs:
+          - targets:
+              - https://hiplingo.com/
+              - https://nathanbrenton.com/
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: 127.0.0.1:9115
+
+IMPORTANT:
+    During the rebuild sequence, create the prometheus and node jobs first.
+    Add blackbox_https only AFTER Blackbox Exporter is installed and direct
+    probes succeed.
+
+Systemd unit
+------------
+Authoritative current functional shape:
+
+    /etc/systemd/system/prometheus.service
+
+    [Unit]
+    Description=Prometheus Monitoring Server
+    Documentation=https://prometheus.io/docs/
+    Wants=network-online.target
+    After=network-online.target node_exporter.service
+
+    [Service]
+    User=prometheus
+    Group=prometheus
+    Type=simple
+    ExecStart=/usr/local/bin/prometheus \
+      --config.file=/etc/prometheus/prometheus.yml \
+      --storage.tsdb.path=/var/lib/prometheus \
+      --web.listen-address=127.0.0.1:9090
+    Restart=on-failure
+    RestartSec=5s
+    NoNewPrivileges=true
+    ProtectHome=true
+    PrivateTmp=true
+
+    [Install]
+    WantedBy=multi-user.target
+
+Validation BEFORE restart:
+
+    sudo promtool check config /etc/prometheus/prometheus.yml
+
+Then:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now prometheus
+
+    systemctl is-active prometheus
+
+    sudo ss -lntp | grep ':9090'
+
+    curl -fsSG \
+      --data-urlencode 'query=up' \
+      http://127.0.0.1:9090/api/v1/query
+
+Before Blackbox:
+    expected two series: prometheus=1 and node=1.
+
+After Blackbox:
+    expected four "up" series:
+        prometheus
+        node
+        blackbox_https -> hiplingo.com
+        blackbox_https -> nathanbrenton.com
+
+
+======================================================================
+30. BLACKBOX EXPORTER — PUBLIC HTTPS / TLS PROBES
+======================================================================
+
+Current installation
+--------------------
+Debian 13 package commissioned:
+
+    prometheus-blackbox-exporter 0.26.0-1
+
+Install:
+
+    sudo apt update
+    sudo apt install -y prometheus-blackbox-exporter
+
+Package service:
+
+    prometheus-blackbox-exporter.service
+
+Package configuration file:
+
+    /etc/prometheus/blackbox.yml
+
+Private listener override
+-------------------------
+Debian's package initially listened on *:9115. The production design
+explicitly changes this to loopback.
+
+Authoritative defaults file:
+
+    /etc/default/prometheus-blackbox-exporter
+
+Production form:
+
+    ARGS="--config.file=/etc/prometheus/blackbox.yml --web.listen-address=127.0.0.1:9115"
+
+Before changing it on a rebuild:
+
+    sudo cp -a \
+      /etc/default/prometheus-blackbox-exporter \
+      /etc/default/prometheus-blackbox-exporter.pre-loopback
+
+Then write the production ARGS, restart and validate:
+
+    sudo systemctl restart prometheus-blackbox-exporter
+
+    systemctl is-active prometheus-blackbox-exporter
+
+    sudo ss -lntp | grep ':9115'
+
+    curl -fsS http://127.0.0.1:9115/-/healthy
+    echo
+
+Expected:
+
+    127.0.0.1:9115
+    Healthy
+
+HTTP module
+-----------
+The Debian package supplies /etc/prometheus/blackbox.yml. The production
+dashboard uses module:
+
+    http_2xx
+
+The important current module behavior includes IPv4 preference:
+
+    modules:
+      http_2xx:
+        prober: http
+        http:
+          preferred_ip_protocol: "ip4"
+
+Direct probes — do these BEFORE Prometheus integration
+------------------------------------------------------
+
+    echo "===== HIPLINGO HTTPS PROBE ====="
+
+    curl -fsS --get \
+      --data-urlencode 'module=http_2xx' \
+      --data-urlencode 'target=https://hiplingo.com/' \
+      http://127.0.0.1:9115/probe |
+      grep -E '^(probe_success|probe_http_status_code|probe_duration_seconds|probe_http_ssl|probe_ssl_earliest_cert_expiry|probe_http_version)'
+
+    echo
+    echo "===== NATHANBRENTON HTTPS PROBE ====="
+
+    curl -fsS --get \
+      --data-urlencode 'module=http_2xx' \
+      --data-urlencode 'target=https://nathanbrenton.com/' \
+      http://127.0.0.1:9115/probe |
+      grep -E '^(probe_success|probe_http_status_code|probe_duration_seconds|probe_http_ssl|probe_ssl_earliest_cert_expiry|probe_http_version)'
+
+Known-good essentials for both:
+
+    probe_success 1
+    probe_http_status_code 200
+    probe_http_ssl 1
+
+After this succeeds, add the blackbox_https scrape job shown in Section 29,
+run promtool, and reload/restart Prometheus.
+
+Prometheus-side validation:
+
+    curl -fsSG \
+      --data-urlencode 'query=up{job="blackbox_https"}' \
+      http://127.0.0.1:9090/api/v1/query
+
+    curl -fsSG \
+      --data-urlencode 'query=probe_success{job="blackbox_https"}' \
+      http://127.0.0.1:9090/api/v1/query
+
+Both calls should contain both websites with value 1.
+
+
+======================================================================
+31. GRAFANA OSS 13.2 — PRIVATE UI + PROMETHEUS DATASOURCE
+======================================================================
+
+Installation source
+-------------------
+Grafana OSS is installed from Grafana's official Debian APT repository.
+
+Commissioned production version:
+
+    Grafana OSS 13.2.0
+
+Next-rebuild policy:
+    - Do not silently accept an unexpected major-version jump.
+    - Inspect the APT candidate first.
+    - If reproducing this checkpoint exactly, install the tested 13.2.0
+      package when still available.
+    - If upgrading intentionally, validate Unified Storage, datasource
+      provisioning, dashboard schema and plugin behavior before production use.
+
+Repository setup pattern:
+
+    sudo apt-get install -y apt-transport-https wget gnupg
+
+    sudo mkdir -p /etc/apt/keyrings
+
+    sudo wget \
+      -O /etc/apt/keyrings/grafana.asc \
+      https://apt.grafana.com/gpg-full.key
+
+    sudo chmod 0644 /etc/apt/keyrings/grafana.asc
+
+    echo \
+      "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" |
+      sudo tee /etc/apt/sources.list.d/grafana.list >/dev/null
+
+    sudo apt update
+
+    apt-cache policy grafana
+
+Commissioning key note:
+    Grafana signing keys can rotate. During this commissioning sequence, the
+    active expected fingerprint was:
+
+        B53AE77BADB630A683046005963FA27710458545
+
+    On a future rebuild, compare the downloaded key against Grafana's CURRENT
+    official documentation before trusting a changed fingerprint.
+
+Install Grafana OSS:
+
+    sudo apt install -y grafana
+
+Private listener / low-footprint settings
+-----------------------------------------
+Production runs Grafana only on localhost.
+
+Service drop-in:
+
+    /etc/systemd/system/grafana-server.service.d/observability.conf
+
+The required behavior is:
+
+    GF_SERVER_HTTP_ADDR=127.0.0.1
+    anonymous access disabled
+    user signup disabled
+    analytics/reporting/update checks disabled
+    Gravatar disabled
+    plugin auto-preinstallation disabled
+    plugin administration disabled
+
+Current plugin controls include:
+
+    GF_PLUGINS_PREINSTALL_DISABLED=true
+    GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false
+
+The production instance intentionally disabled unused datasource/apps to
+reduce memory/task count on the ~1-GiB VPS.
+
+Current disabled plugin list:
+
+    influxdb
+    grafana-lokiexplore-app
+    grafana-pyroscope-app
+    grafana-exploretraces-app
+    grafana-metricsdrilldown-app
+    elasticsearch
+    tempo
+    zipkin
+    opentsdb
+    stackdriver
+    mssql
+    jaeger
+    loki
+    mysql
+    grafana-advisor-app
+    grafana-postgresql-datasource
+    grafana-pyroscope-datasource
+
+On a CLEAN rebuild, set plugin preinstall controls before first normal service
+start where practical. The existing server had already downloaded suggested
+plugins, so unused plugins were quarantined under:
+
+    /var/lib/grafana/plugins-quarantine-20260821
+
+Do not blindly recreate that quarantine directory on a clean rebuild. It is a
+remediation artifact, not a required runtime path.
+
+Prometheus datasource provisioning
+----------------------------------
+
+Authoritative file:
+
+    /etc/grafana/provisioning/datasources/prometheus.yaml
+
+Current content:
+
+    apiVersion: 1
+
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://127.0.0.1:9090
+        isDefault: true
+        editable: false
+
+        jsonData:
+          httpMethod: POST
+          prometheusType: Prometheus
+          prometheusVersion: 3.13.2
+          timeInterval: 30s
+
+Start / validate:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now grafana-server
+
+    systemctl is-active grafana-server
+
+    sudo ss -lntp | grep ':3000'
+
+    curl -fsS http://127.0.0.1:3000/api/health
+    echo
+
+Expected:
+    listener is 127.0.0.1:3000
+    database = ok
+
+
+======================================================================
+32. GRAFANA ACCESS — SSH LOCAL PORT FORWARD ONLY
+======================================================================
+
+Grafana is not publicly exposed.
+
+Known-working Mac/client tunnel
+-------------------------------
+
+    ssh \
+      -N \
+      -o IdentitiesOnly=yes \
+      -i "$HOME/.ssh/web-prod-01_admin_ed25519" \
+      -o ExitOnForwardFailure=yes \
+      -o ServerAliveInterval=15 \
+      -o ServerAliveCountMax=4 \
+      -o TCPKeepAlive=yes \
+      -L 3000:127.0.0.1:3000 \
+      n8@45.32.88.137
+
+Then browse locally:
+
+    http://127.0.0.1:3000/
+
+Why IdentitiesOnly + explicit key are used:
+    A generic SSH invocation previously exhausted authentication attempts
+    because the client offered too many identities.
+
+Known operational behavior:
+    The SSH tunnel has occasionally ended with a local/upstream
+    "client_loop: send disconnect: Broken pipe". Server-side audits showed no
+    sshd/Grafana restart, kernel/OOM event, or host load event at those times.
+    Do not weaken sshd or nftables to work around a client/network path issue.
+
+Future convenience:
+    autossh may be used later for automatic tunnel reconnection, but it is not
+    required to reproduce observability v1.
+
+
+======================================================================
+33. GRAFANA DASHBOARD V1 — 34-PANEL REBUILD SPECIFICATION
+======================================================================
+
+Dashboard identity
+------------------
+
+    Title:
+        web-prod-01 - Operations
+
+    Description:
+        Production server observability dashboard for web-prod-01.
+        Prometheus/node_exporter metrics for CPU, memory, swap, load,
+        storage, network, uptime, and service health.
+
+    Typical working time range:
+        Last 7 days
+
+As historical data accumulates, also inspect:
+        Last 28 days
+
+Grafana 13 UI notes
+-------------------
+- Dashboard edit mode uses the right-side "+" to add a panel.
+- In panel editor, choose Prometheus and use Code mode for PromQL.
+- For literal legends such as "5 min", do NOT add {{ }}.
+- {{label}} syntax is only for real Prometheus label interpolation.
+- "Last *" in Stat means last non-null.
+- A panel duplicated from another panel can inherit Display name, mappings,
+  thresholds, units, min/max, and graph mode. Audit these after duplication.
+- After changing queries, click Run queries; otherwise an old result may still
+  be displayed.
+- If new Prometheus series were created after the dashboard time endpoint,
+  refresh the dashboard time before concluding "No data".
+
+----------------------------------------------------------------------
+33A. OPERATOR SUMMARY — STAT PANELS
+----------------------------------------------------------------------
+
+STATUS
+    Query:
+        up{job="node"}
+
+    Stat:
+        Calculation: Last *
+        Text mode: Value
+        Display name: STATUS
+        Mapping:
+            1 -> UP      green
+            0 -> DOWN    red
+            Null -> UNKNOWN orange
+
+UPTIME
+    Query:
+        (time() - node_boot_time_seconds) / 86400
+
+    Unit:
+        suffix: d
+    Decimals:
+        1
+
+CPU
+    Query:
+        100 * (
+          1 -
+          avg by (host) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          )
+        )
+
+    Unit:
+        Percent (0-100)
+    Min: 0
+    Max: 100
+    Decimals: 1
+
+RAM
+    Query:
+        100 * (
+          1 -
+          node_memory_MemAvailable_bytes
+          /
+          node_memory_MemTotal_bytes
+        )
+
+    Unit:
+        Percent (0-100)
+    Min: 0
+    Max: 100
+    Decimals: 1
+
+SWAP
+    Query:
+        100 * (
+          1 -
+          node_memory_SwapFree_bytes
+          /
+          node_memory_SwapTotal_bytes
+        )
+
+    Unit:
+        Percent (0-100)
+    Min: 0
+    Max: 100
+    Decimals: 1
+
+DISK
+    Query:
+        100 * (
+          1 -
+          node_filesystem_avail_bytes{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+          /
+          node_filesystem_size_bytes{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+        )
+
+    Unit:
+        Percent (0-100)
+    Min: 0
+    Max: 100
+    Decimals: 1
+
+----------------------------------------------------------------------
+33B. CPU
+----------------------------------------------------------------------
+
+CPU Utilization
+    Query:
+        100 * (
+          1 -
+          avg by (host) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          )
+        )
+
+    Legend: CPU
+    Time series
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+System Load
+    Queries:
+        node_load1     legend "1 min"
+        node_load5     legend "5 min"
+        node_load15    legend "15 min"
+
+    Time series
+    Unit: none
+    Min: 0
+    Max: auto
+
+    Interpretation for the current 1-vCPU host:
+        ~0-0.5 = light
+        ~1     = roughly one CPU's worth of runnable demand
+        sustained >1 can indicate queueing
+
+    This is interpretive guidance, NOT a configured alert threshold.
+    Linux load also includes tasks in uninterruptible I/O sleep.
+
+CPU Daily Range
+    IMPORTANT:
+        These are rolling 24-hour windows sampled at one-day minimum steps,
+        not strict midnight-to-midnight calendar buckets.
+
+    A — Low:
+        min_over_time(
+          (
+            100 * (
+              1 -
+              avg by (host) (
+                rate(node_cpu_seconds_total{mode="idle"}[5m])
+              )
+            )
+          )[24h:5m]
+        )
+
+    B — Average:
+        avg_over_time(
+          (
+            100 * (
+              1 -
+              avg by (host) (
+                rate(node_cpu_seconds_total{mode="idle"}[5m])
+              )
+            )
+          )[24h:5m]
+        )
+
+    C — p95:
+        quantile_over_time(
+          0.95,
+          (
+            100 * (
+              1 -
+              avg by (host) (
+                rate(node_cpu_seconds_total{mode="idle"}[5m])
+              )
+            )
+          )[24h:5m]
+        )
+
+    D — High:
+        max_over_time(
+          (
+            100 * (
+              1 -
+              avg by (host) (
+                rate(node_cpu_seconds_total{mode="idle"}[5m])
+              )
+            )
+          )[24h:5m]
+        )
+
+    Legends:
+        Low
+        Average
+        p95
+        High
+
+    Min step on all four:
+        1d
+
+    Unit:
+        Percent (0-100)
+    Min:
+        0
+    Max:
+        auto
+
+----------------------------------------------------------------------
+33C. MEMORY / SWAP
+----------------------------------------------------------------------
+
+RAM Utilization
+    Query:
+        100 * (
+          1 -
+          node_memory_MemAvailable_bytes
+          /
+          node_memory_MemTotal_bytes
+        )
+
+    Legend: RAM
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+RAM Daily Range
+
+    Low:
+        min_over_time(
+          (
+            100 * (
+              1 -
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          )[24h:5m]
+        )
+
+    Average:
+        avg_over_time(
+          (
+            100 * (
+              1 -
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          )[24h:5m]
+        )
+
+    p95:
+        quantile_over_time(
+          0.95,
+          (
+            100 * (
+              1 -
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          )[24h:5m]
+        )
+
+    High:
+        max_over_time(
+          (
+            100 * (
+              1 -
+              node_memory_MemAvailable_bytes
+              /
+              node_memory_MemTotal_bytes
+            )
+          )[24h:5m]
+        )
+
+    Min step: 1d on all four
+    Unit: Percent (0-100)
+    Min: 0
+    Max: auto
+
+Swap Utilization
+    Query:
+        100 * (
+          1 -
+          node_memory_SwapFree_bytes
+          /
+          node_memory_SwapTotal_bytes
+        )
+
+    Legend: Swap
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+Swap Activity
+    A:
+        rate(node_vmstat_pswpin[5m])
+        legend "Swap In"
+
+    B:
+        rate(node_vmstat_pswpout[5m])
+        legend "Swap Out"
+
+    Unit:
+        suffix: pages/s
+    Min:
+        0
+    Max:
+        auto
+
+    Interpretation:
+        swap occupancy is not the same as memory pressure.
+        Sustained swap-in/out activity is the stronger pressure signal.
+
+----------------------------------------------------------------------
+33D. STORAGE
+----------------------------------------------------------------------
+
+Disk Utilization
+    Query:
+        100 * (
+          1 -
+          node_filesystem_avail_bytes{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+          /
+          node_filesystem_size_bytes{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+        )
+
+    Legend: Disk
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+Inode Utilization
+    Query:
+        100 * (
+          1 -
+          node_filesystem_files_free{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+          /
+          node_filesystem_files{
+            mountpoint="/",
+            fstype!~"tmpfs|overlay"
+          }
+        )
+
+    Legend: Inodes
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+Disk I/O Throughput
+    Current block device:
+        vda
+
+    A:
+        rate(node_disk_read_bytes_total{device="vda"}[5m])
+        legend "Read"
+
+    B:
+        rate(node_disk_written_bytes_total{device="vda"}[5m])
+        legend "Write"
+
+    Unit:
+        bytes/sec (B/s)
+    Min:
+        0
+
+    NEXT REBUILD:
+        verify the root block-device name before hard-coding vda.
+
+Disk I/O Busy
+    Query:
+        100 * rate(
+          node_disk_io_time_seconds_total{device="vda"}[5m]
+        )
+
+    Legend: Disk Busy
+    Unit: Percent (0-100)
+    Min: 0
+    Max: 100
+
+Disk I/O Latency
+    A — Read:
+        1000 * (
+          rate(node_disk_read_time_seconds_total{device="vda"}[5m])
+          /
+          rate(node_disk_reads_completed_total{device="vda"}[5m])
+        )
+
+    B — Write:
+        1000 * (
+          rate(node_disk_write_time_seconds_total{device="vda"}[5m])
+          /
+          rate(node_disk_writes_completed_total{device="vda"}[5m])
+        )
+
+    Legends:
+        Read
+        Write
+
+    Unit:
+        ms
+    Min:
+        0
+
+    NOTE:
+        Windows with zero I/O can legitimately produce gaps. Do not force
+        missing latency data to zero.
+
+Disk Capacity Trend
+    A — Used:
+        node_filesystem_size_bytes{
+          mountpoint="/",
+          fstype!~"tmpfs|overlay"
+        }
+        -
+        node_filesystem_avail_bytes{
+          mountpoint="/",
+          fstype!~"tmpfs|overlay"
+        }
+
+    B — Available:
+        node_filesystem_avail_bytes{
+          mountpoint="/",
+          fstype!~"tmpfs|overlay"
+        }
+
+    Unit:
+        bytes
+    Min:
+        0
+
+Disk 24h Net Growth
+    Query:
+        delta(
+          (
+            node_filesystem_size_bytes{
+              mountpoint="/",
+              fstype!~"tmpfs|overlay"
+            }
+            -
+            node_filesystem_avail_bytes{
+              mountpoint="/",
+              fstype!~"tmpfs|overlay"
+            }
+          )[24h:5m]
+        )
+
+    Legend:
+        24h Net Growth
+
+    Unit:
+        bytes
+
+    Min:
+        auto — IMPORTANT: negative values mean space was freed and are valid.
+
+----------------------------------------------------------------------
+33E. NETWORK
+----------------------------------------------------------------------
+
+Network Throughput
+    A — RX:
+        8 * sum(
+          rate(
+            node_network_receive_bytes_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+
+    B — TX:
+        8 * sum(
+          rate(
+            node_network_transmit_bytes_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+
+    Legends:
+        RX
+        TX
+
+    Unit:
+        bits/sec (SI)
+    Min:
+        0
+
+Network Errors & Drops
+    A:
+        sum(
+          rate(
+            node_network_receive_errs_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+        legend "RX Errors"
+
+    B:
+        sum(
+          rate(
+            node_network_transmit_errs_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+        legend "TX Errors"
+
+    C:
+        sum(
+          rate(
+            node_network_receive_drop_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+        legend "RX Drops"
+
+    D:
+        sum(
+          rate(
+            node_network_transmit_drop_total{
+              device!~"lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*"
+            }[5m]
+          )
+        )
+        legend "TX Drops"
+
+    Unit:
+        packets/s
+    Min:
+        0
+
+Network by Interface
+    A:
+        8 * rate(
+          node_network_receive_bytes_total{
+            device!="lo"
+          }[5m]
+        )
+        legend "{{device}} RX"
+
+    B:
+        8 * rate(
+          node_network_transmit_bytes_total{
+            device!="lo"
+          }[5m]
+        )
+        legend "{{device}} TX"
+
+    Unit:
+        bits/sec (SI)
+    Min:
+        0
+
+    This panel intentionally excludes ONLY loopback so future bridge/container
+    interfaces remain visible diagnostically.
+
+----------------------------------------------------------------------
+33F. SYSTEM / SERVICE HEALTH
+----------------------------------------------------------------------
+
+Processes
+    A:
+        node_procs_running
+        legend "Running"
+
+    B:
+        node_procs_blocked
+        legend "Blocked"
+
+    Unit:
+        none
+    Min:
+        0
+    Decimals:
+        0
+
+Failed Services
+    Query:
+        sum(
+          node_systemd_unit_state{
+            name=~".+[.]service",
+            state="failed"
+          }
+        ) or vector(0)
+
+    Legend:
+        Failed Services
+
+    IMPORTANT:
+        "or vector(0)" converts the healthy empty-vector case into an explicit
+        numeric zero.
+
+Service Restarts (24h)
+    Query:
+        round(
+          increase(
+            node_systemd_service_restart_total{
+              name=~"nginx.service|postfix.service|opendkim.service|monit.service|fail2ban.service|nftables.service|ssh.service|postsrsd.service"
+            }[24h]
+          )
+        )
+
+    Legend:
+        {{name}}
+
+    Interpretation:
+        this is the systemd automatic-restart trigger counter, not a complete
+        history of every intentional manual systemctl restart.
+
+Service Start Age
+    Query:
+        (
+          time()
+          -
+          node_systemd_unit_start_time_seconds{
+            name=~"nginx.service|postfix.service|opendkim.service|monit.service|fail2ban.service|nftables.service|ssh.service|postsrsd.service"
+          }
+        ) / 3600
+
+    Legend:
+        {{name}}
+
+    Unit:
+        hours (h)
+    Min:
+        0
+    Decimals:
+        1
+
+Prometheus Scrape Health
+    Query:
+        up{job=~"prometheus|node"}
+
+    Legend:
+        {{job}}
+
+    Stat:
+        Calculation: Last *
+        Text mode: Value and name
+        Display name: BLANK
+
+    Mapping:
+        1 -> UP
+        0 -> DOWN
+        Null -> UNKNOWN
+
+Critical Service State
+    Query:
+        node_systemd_unit_state{
+          name=~"nginx.service|postfix.service|opendkim.service|monit.service|fail2ban.service|nftables.service|ssh.service|postsrsd.service",
+          state="active"
+        }
+
+    Legend:
+        {{name}}
+
+    Stat:
+        Calculation: Last *
+        Text mode: Value and name
+        Display name: BLANK
+
+    Mapping:
+        1 -> UP
+        0 -> DOWN
+        Null -> UNKNOWN
+
+Daily Health Report
+    Query:
+        (
+          time()
+          -
+          node_systemd_timer_last_trigger_seconds{
+            name="server-health-report.timer"
+          }
+        ) / 3600
+
+    Stat:
+        Display name: Last Run
+        Text mode: Value and name
+        Graph mode: None
+
+    Unit:
+        suffix: h
+    Decimals:
+        1
+    Min:
+        0
+    Max:
+        auto
+
+    Absolute thresholds:
+        Base -> green
+        25   -> yellow
+        27   -> red
+
+    Why:
+        timer runs daily at 08:00 America/Los_Angeles.
+        25 hours allows modest scheduling/runtime variance.
+        27 hours means the expected daily execution is materially overdue.
+
+Daily Health Report Result
+    Query:
+        node_systemd_unit_state{
+          name="server-health-report.service",
+          state="failed"
+        }
+
+    Stat:
+        Display name: Result
+        Text mode: Value and name
+        Graph mode: None
+
+    Unit:
+        none
+    Min:
+        0
+    Max:
+        1
+    Decimals:
+        0
+
+    Mapping:
+        0 -> OK      green
+        1 -> FAILED  red
+
+    Do NOT inherit the 25/27-hour thresholds from the freshness panel.
+
+----------------------------------------------------------------------
+33G. PUBLIC WEBSITE HEALTH
+----------------------------------------------------------------------
+
+Website Availability
+    A:
+        probe_success{
+          job="blackbox_https",
+          instance="https://hiplingo.com/"
+        }
+        legend "hiplingo.com"
+        Type: Instant
+
+    B:
+        probe_success{
+          job="blackbox_https",
+          instance="https://nathanbrenton.com/"
+        }
+        legend "nathanbrenton.com"
+        Type: Instant
+
+    Stat:
+        Text mode: Value and name
+        Graph mode: None
+        Display name: BLANK
+
+    Mapping:
+        1 -> UP
+        0 -> DOWN
+        Null -> UNKNOWN
+
+HTTP Response Time
+    A:
+        1000 * probe_duration_seconds{
+          job="blackbox_https",
+          instance="https://hiplingo.com/"
+        }
+        legend "hiplingo.com"
+
+    B:
+        1000 * probe_duration_seconds{
+          job="blackbox_https",
+          instance="https://nathanbrenton.com/"
+        }
+        legend "nathanbrenton.com"
+
+    Type:
+        Range
+
+    Unit:
+        ms
+    Min:
+        0
+
+    NOTE:
+        This is total Blackbox HTTP probe duration, not only nginx/app
+        processing time. DNS/connect/TLS/HTTP phases contribute to it.
+
+TLS Certificate Expiry
+    A:
+        (
+          probe_ssl_earliest_cert_expiry{
+            job="blackbox_https",
+            instance="https://hiplingo.com/"
+          }
+          -
+          time()
+        ) / 86400
+
+        legend "hiplingo.com"
+        Type: Instant
+
+    B:
+        (
+          probe_ssl_earliest_cert_expiry{
+            job="blackbox_https",
+            instance="https://nathanbrenton.com/"
+          }
+          -
+          time()
+        ) / 86400
+
+        legend "nathanbrenton.com"
+        Type: Instant
+
+    Stat:
+        Text mode: Value and name
+        Graph mode: None
+        Display name: BLANK
+
+    Unit:
+        suffix: d
+    Decimals:
+        1
+    Min:
+        0
+    Max:
+        auto
+
+    VALUE MAPPINGS:
+        NONE
+
+    Absolute thresholds:
+        Base -> red
+        14   -> yellow
+        30   -> green
+
+    A duplicated Website Availability panel will inherit 0/1 UP/DOWN mappings.
+    REMOVE THEM or a one-day certificate value can misleadingly display "UP".
+
+
+======================================================================
+34. GRAFANA 13 UNIFIED STORAGE — IMPORTANT REBUILD / BACKUP NOTE
+======================================================================
+
+Grafana 13 stores dashboards using Unified Storage.
+
+Current SQLite database:
+
+    /var/lib/grafana/grafana.db
+
+Do NOT assume the legacy "dashboard" table contains current dashboards.
+
+Validated current behavior:
+
+    legacy table:
+        dashboard rows = 0
+
+    current Unified Storage table:
+        resource
+
+    dashboard resource selector:
+        group    = dashboard.grafana.app
+        resource = dashboards
+        namespace = default
+
+The v1 dashboard was stored as one dashboard resource.
+
+Read-only inspection pattern:
+
+    sudo python3 <<'PY'
+    import json
+    import sqlite3
+
+    con = sqlite3.connect(
+        "file:/var/lib/grafana/grafana.db?mode=ro",
+        uri=True
+    )
+
+    rows = con.execute("""
+        SELECT name, namespace, resource_version, value
+        FROM resource
+        WHERE "group"='dashboard.grafana.app'
+          AND resource='dashboards'
+        ORDER BY resource_version DESC
+    """).fetchall()
+
+    print("dashboard resources:", len(rows))
+
+    for name, namespace, version, raw in rows:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+
+        obj = json.loads(raw)
+
+        print(
+            "name=", name,
+            "namespace=", namespace,
+            "version=", version,
+            "title=", obj.get("spec", {}).get("title"),
+            "elements=", len(obj.get("spec", {}).get("elements", {})),
+        )
+
+    con.close()
+    PY
+
+Current expected title:
+
+    web-prod-01 - Operations
+
+Current expected element/panel count:
+
+    34
+
+Rebuild recommendation
+----------------------
+The runbook is sufficient to reconstruct the dashboard manually, but before a
+future destructive rebuild also preserve a dashboard export/backup separately.
+
+Treat Grafana's SQLite file as application state, not as the only source of
+truth. A future documentation milestone should add a source-controlled
+dashboard export once the dashboard stabilizes further.
+
+
+======================================================================
+35. OBSERVABILITY V1 FINAL VALIDATION
+======================================================================
+
+Run after the full rebuild.
+
+Service / listener validation
+-----------------------------
+
+    echo "===== OBSERVABILITY SERVICES ====="
+
+    for svc in \
+      grafana-server \
+      prometheus \
+      node_exporter \
+      prometheus-blackbox-exporter
+    do
+      printf '%-32s active=%-10s enabled=%s\n' \
+        "$svc" \
+        "$(systemctl is-active "$svc" 2>/dev/null)" \
+        "$(systemctl is-enabled "$svc" 2>/dev/null)"
+    done
+
+    echo
+    echo "===== PRIVATE LISTENERS ====="
+
+    sudo ss -lntp |
+      grep -E ':(3000|9090|9100|9115)[[:space:]]'
+
+    echo
+    echo "===== PROMETHEUS CONFIG ====="
+
+    sudo promtool check config /etc/prometheus/prometheus.yml
+
+Expected:
+    all four services active + enabled
+    all four listeners on 127.0.0.1 only
+    Prometheus config SUCCESS
+
+Live Prometheus checks
+----------------------
+
+    echo "===== TARGETS ====="
+
+    curl -fsSG \
+      --data-urlencode 'query=up' \
+      http://127.0.0.1:9090/api/v1/query
+    echo
+
+    echo "===== WEBSITE PROBE SUCCESS ====="
+
+    curl -fsSG \
+      --data-urlencode 'query=probe_success{job="blackbox_https"}' \
+      http://127.0.0.1:9090/api/v1/query
+    echo
+
+    echo "===== TLS DAYS REMAINING ====="
+
+    curl -fsSG \
+      --data-urlencode \
+      'query=(probe_ssl_earliest_cert_expiry{job="blackbox_https"} - time()) / 86400' \
+      http://127.0.0.1:9090/api/v1/query
+    echo
+
+    echo "===== FAILED SYSTEMD SERVICES ====="
+
+    curl -fsSG \
+      --data-urlencode \
+      'query=sum(node_systemd_unit_state{name=~".+[.]service",state="failed"}) or vector(0)' \
+      http://127.0.0.1:9090/api/v1/query
+    echo
+
+    echo "===== DAILY HEALTH TIMER ====="
+
+    curl -fsSG \
+      --data-urlencode \
+      'query=node_systemd_timer_last_trigger_seconds{name="server-health-report.timer"}' \
+      http://127.0.0.1:9090/api/v1/query
+    echo
+
+Expected production state at commissioning:
+
+    up:
+        prometheus = 1
+        node       = 1
+        blackbox_https hiplingo.com       = 1
+        blackbox_https nathanbrenton.com  = 1
+
+    probe_success:
+        both websites = 1
+
+    failed systemd services:
+        0
+
+    daily health timer:
+        one series present
+
+Grafana dashboard validation
+----------------------------
+
+In Grafana:
+    - dashboard title is "web-prod-01 - Operations"
+    - 34 panels exist
+    - no duplicated panel titles
+    - Website Availability shows both sites UP
+    - TLS Certificate Expiry shows numeric day values, NOT UP/DOWN
+    - TLS value mappings are empty
+    - TLS thresholds are 0 red / 14 yellow / 30 green
+    - System Load legends are exactly 1 min / 5 min / 15 min
+    - Prometheus Scrape Health labels are prometheus / node
+    - Daily Health Report uses 25h/27h freshness thresholds
+    - Daily Health Report Result maps 0=OK and 1=FAILED
+
+Commissioning validation on 2026-08-24
+--------------------------------------
+
+Final state:
+
+    dashboard panels:                  34
+    Prometheus config:                 valid
+    Prometheus/node scrape health:     PASS
+    Blackbox scrape transport:         PASS
+    both public websites HTTPS:        UP
+    failed systemd services:           0
+    health-report timer metric:        present
+    TLS metrics:                       present for both sites
+    TLS days remaining at checkpoint:  approximately 77.4 days
+    TLS panel inherited mappings:      removed
+    TLS thresholds:                    0 / 14 / 30
+
+
+======================================================================
+36. CURRENT RESOURCE BASELINE / INTERPRETATION
+======================================================================
+
+Host shape at commissioning:
+
+    1 vCPU
+    ~961 MiB RAM
+    3 GiB swap
+    ~30-GB root filesystem
+
+Observed normal baseline during commissioning
+---------------------------------------------
+
+CPU:
+    roughly ~1% at idle
+    occasional installation/configuration spikes
+
+RAM:
+    roughly mid-50% range after observability stack stabilization
+
+Swap:
+    roughly ~2.5% occupied
+    normally no sustained swap-in/out activity
+
+Disk:
+    roughly ~36% root filesystem utilization
+
+Load:
+    usually very low on this 1-vCPU host
+
+Grafana:
+    memory was reduced substantially by disabling/quarantining unused suggested
+    plugins. Exact RSS varies over time and should be interpreted as a trend,
+    not a fixed target.
+
+Interpretation rules
+--------------------
+- A small amount of occupied swap is not itself a problem.
+- Sustained swap IN/OUT activity matters more than occupancy alone.
+- Linux load is not identical to CPU utilization; I/O waits can contribute.
+- Disk throughput alone does not prove disk pressure; correlate throughput,
+  busy %, latency and load.
+- A Blackbox probe executed from the same VPS proves the site works from that
+  host's network path; it is NOT independent proof that the VPS itself is
+  reachable from the wider Internet.
+
+
+======================================================================
+37. OBSERVABILITY SECURITY / OPERATING POLICY
+======================================================================
+
+1. Grafana, Prometheus, node_exporter and Blackbox Exporter remain loopback
+   only.
+
+2. Do not add public nftables rules for TCP 3000, 9090, 9100 or 9115.
+
+3. Grafana administrative access is through SSH local port forwarding.
+
+4. node_exporter runs as an unprivileged service identity.
+
+5. Prometheus runs as an unprivileged service identity and writes only to its
+   TSDB path.
+
+6. Blackbox Exporter probes the two public HTTPS sites at a low rate
+   (60-second Prometheus scrape interval). This is normal observability traffic,
+   not load testing.
+
+7. External server testing remains deliberately low-noise:
+       - prefer local/on-box validation first;
+       - use narrowly targeted tests only against owned hosts;
+       - avoid broad scanning, fuzzing, brute-force behavior or high-rate
+         probes.
+
+8. Monit remains independent of Prometheus/Grafana and should not be removed
+   merely because a dashboard exists.
+
+9. Do not configure automatic production service remediation solely from new
+   Prometheus/Grafana metrics without a deliberate operational policy.
+
+10. Historical telemetry is useful only if the host remains up. Same-host
+    Prometheus cannot report the complete loss of the VPS while the VPS is
+    offline.
+
+
+======================================================================
+38. NEXT OBSERVABILITY MILESTONES — NOT YET PART OF CURRENT V1
+======================================================================
+
+The following are intentionally FUTURE work and must not be mistaken for
+current production state.
+
+NEXT:
+    Prometheus alert rules + Alertmanager
+
+Goal:
+    move from "the dashboard shows a problem" to "the monitoring stack
+    proactively delivers a notification when action is needed."
+
+Expected alert-rule areas:
+    CPU sustained pressure
+    RAM sustained pressure
+    active swap pressure
+    disk utilization / inode utilization
+    disk-growth risk
+    failed critical services
+    Prometheus/node scrape loss
+    website probe failure
+    TLS certificate nearing expiry
+    daily health-report freshness/result
+
+AFTER ALERTING:
+    Enhance the existing Daily Server Health email so it queries Prometheus for
+    historical min/average/p95/max rather than remaining snapshot-only.
+
+LATER:
+    Grafana Alloy + Loki for logs and metric/log correlation.
+
+LATER:
+    independent EXTERNAL uptime probe, because same-host monitoring cannot
+    detect/report total VPS loss.
+
+OPTIONAL / WHEN APPLICATION NEED JUSTIFIES IT:
+    OpenTelemetry + Tempo for distributed/application tracing.
+
+Jenkins:
+    useful later for CI/CD, but not part of the monitoring stack and should
+    not be installed on this small public production VPS merely for technology
+    signaling.
+
+
+======================================================================
+39. OBSERVABILITY PRIMARY REFERENCES
+======================================================================
+
+Prometheus downloads / official checksums:
+    https://prometheus.io/download/
+
+Prometheus configuration:
+    https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+
+Prometheus storage:
+    https://prometheus.io/docs/prometheus/latest/storage/
+
+Prometheus node_exporter:
+    https://github.com/prometheus/node_exporter
+
+Prometheus Blackbox Exporter:
+    https://github.com/prometheus/blackbox_exporter
+
+Grafana Debian/Ubuntu installation:
+    https://grafana.com/docs/grafana/latest/setup-grafana/installation/debian/
+
+Grafana provisioning:
+    https://grafana.com/docs/grafana/latest/administration/provisioning/
+
+Grafana dashboards:
+    https://grafana.com/docs/grafana/latest/dashboards/
+
+
+======================================================================
+40. AUTHORITATIVE OBSERVABILITY V1 CHECKPOINT — 2026-08-24
+======================================================================
+
+Validated/current:
+
+    - node_exporter 1.12.1 active + enabled
+    - node_exporter bound to 127.0.0.1:9100
+    - systemd collector exposes unit state, restart, start-time and timer data
+
+    - Prometheus 3.13.2 LTS active + enabled
+    - Prometheus bound to 127.0.0.1:9090
+    - 30-second base scrape/evaluation
+    - retention configured for 180 days and 2 GB
+    - prometheus + node targets UP
+    - blackbox_https targets UP
+
+    - Grafana OSS 13.2.0 active + enabled
+    - Grafana bound to 127.0.0.1:3000
+    - Prometheus datasource provisioned at 127.0.0.1:9090
+    - anonymous access disabled
+    - signup disabled
+    - unnecessary plugin preinstallation/admin disabled
+    - dashboard stored in Grafana 13 Unified Storage
+    - dashboard "web-prod-01 - Operations" contains 34 panels
+
+    - Blackbox Exporter 0.26.0 active + enabled
+    - Blackbox Exporter bound to 127.0.0.1:9115
+    - hiplingo.com HTTPS probe success = 1
+    - nathanbrenton.com HTTPS probe success = 1
+    - both TLS-expiry metrics present
+
+    - Daily Health Report freshness and service-result panels validated
+    - failed-systemd-service query explicitly returns 0 when healthy
+    - public TLS panel has no inherited UP/DOWN value mappings
+    - TLS alert-display thresholds are:
+          <14 days       red
+          14-30 days     yellow
+          >=30 days      green
+
+    - no observability ports are publicly exposed
+
+OBSERVABILITY V1 STATUS:
+
+    COMPLETE
+
+NEXT MILESTONE:
+
+    Prometheus alert rules + Alertmanager
 
 
 END OF RUNBOOK
