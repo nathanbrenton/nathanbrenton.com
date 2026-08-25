@@ -5,7 +5,7 @@ nathanbrenton.com website deployment workflow.
 
 ## Authoritative documents
 
-### `web-prod-01-production-rebuild-runbook-20260825-weekly-digest.txt`
+### `web-prod-01-production-rebuild-runbook-20260825-alloy-loki.txt`
 
 Authoritative machine rebuild / operations runbook for `web-prod-01`.
 
@@ -26,8 +26,13 @@ Covers:
 - Daily Server Health Report v2;
 - Weekly Operations Digest;
 - 18 production Prometheus alert rules;
-- node_exporter systemd collector integration;
-- independent Monit observability watchdog;
+- Grafana Alloy + Loki local log aggregation;
+- seven-day local Loki retention;
+- selected journald + nginx ingestion;
+- Loki/Alloy Prometheus + node_exporter + Monit integration;
+- Grafana on-demand resource policy;
+- Grafana Loki datasource/plugin activation;
+- resource-constrained installation and commissioning guidance;
 - final operational audits.
 
 Completed observability/reporting milestones:
@@ -35,11 +40,12 @@ Completed observability/reporting milestones:
 - Observability v1;
 - Alerting v1;
 - Daily Server Health Report v2;
-- Weekly Operations Digest.
+- Weekly Operations Digest;
+- Grafana Alloy + Loki.
 
 Next recommended observability milestone:
 
-- Grafana Alloy + Loki.
+- independent external uptime monitoring.
 
 ### `nathanbrenton.com-production-deployment-workflow.txt`
 
@@ -62,9 +68,9 @@ Hiplingo publication/media deployment belongs in:
 
 The previous authoritative runbook:
 
-`web-prod-01-production-rebuild-runbook-20260825-daily-report-v2.txt`
+`web-prod-01-production-rebuild-runbook-20260825-weekly-digest.txt`
 
-is superseded by the Weekly Operations Digest revision.
+is superseded by the Alloy + Loki revision and belongs under `_old/`.
 
 Older server/mail/rebuild documentation should remain archived rather than
 maintained as competing active sources of truth.
