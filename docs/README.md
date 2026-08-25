@@ -5,7 +5,7 @@ nathanbrenton.com website deployment workflow.
 
 ## Authoritative documents
 
-### `web-prod-01-production-rebuild-runbook-20260825-alloy-loki.txt`
+### `web-prod-01-production-rebuild-runbook-20260825-external-monitoring.txt`
 
 Authoritative machine rebuild / operations runbook for `web-prod-01`.
 
@@ -41,11 +41,19 @@ Completed observability/reporting milestones:
 - Alerting v1;
 - Daily Server Health Report v2;
 - Weekly Operations Digest;
-- Grafana Alloy + Loki.
+- Grafana Alloy + Loki;
+- independent external HTTPS uptime monitoring;
+- independent daily/weekly report heartbeats.
 
-Next recommended observability milestone:
+Current observability posture:
 
-- independent external uptime monitoring.
+- local metrics, alerting, and log observability are commissioned;
+- independent external uptime/heartbeat monitoring is commissioned;
+- no additional public observability ports are required.
+
+Next recommended operations step:
+
+- observe the commissioned stack in steady state before adding another always-on observability component.
 
 ### `nathanbrenton.com-production-deployment-workflow.txt`
 
@@ -79,3 +87,6 @@ maintained as competing active sources of truth.
 
 `docs/` is operational/source documentation and must not be included in the
 public nathanbrenton.com release payload.
+
+`web-prod-01-production-rebuild-runbook-20260825-alloy-loki.txt`
+is superseded by the external monitoring revision and belongs under `_old/`.
