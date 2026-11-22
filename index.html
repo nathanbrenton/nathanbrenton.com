@@ -17,6 +17,113 @@
   <meta property="og:description" content="IT support, migrations, websites, photo, video and listings for small businesses in Orange County, California." />
   <meta property="og:url" content="https://nathanbrenton.com/" />
   <meta name="twitter:card" content="summary" />
+  <script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://nathanbrenton.com/#website",
+        "url": "https://nathanbrenton.com/",
+        "name": "Nathan Brenton",
+        "publisher": {
+          "@id": "https://nathanbrenton.com/#business"
+        }
+      },
+      {
+        "@type": "ProfessionalService",
+        "@id": "https://nathanbrenton.com/#business",
+        "name": "Nathan Brenton IT and Digital Media Consulting",
+        "url": "https://nathanbrenton.com/",
+        "email": "mailto:info@nathanbrenton.com",
+        "founder": {
+          "@id": "https://nathanbrenton.com/#person"
+        },
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": "Orange County",
+          "addressRegion": "CA",
+          "addressCountry": "US"
+        },
+        "areaServed": {
+          "@type": "AdministrativeArea",
+          "name": "Orange County, California"
+        },
+        "image": "https://nathanbrenton.com/favicon-512x512.png",
+        "hasOfferCatalog": {
+          "@type": "OfferCatalog",
+          "name": "Services",
+          "itemListElement": [
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "IT support and migrations",
+                "url": "https://nathanbrenton.com/services/#it"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Websites",
+                "url": "https://nathanbrenton.com/services/#websites"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Photo and video",
+                "url": "https://nathanbrenton.com/services/#photo-video"
+              }
+            },
+            {
+              "@type": "Offer",
+              "itemOffered": {
+                "@type": "Service",
+                "name": "Social and listings",
+                "url": "https://nathanbrenton.com/services/#social-listings"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "@type": "Person",
+        "@id": "https://nathanbrenton.com/#person",
+        "name": "Nathan Brenton",
+        "url": "https://nathanbrenton.com/about/",
+        "jobTitle": "IT and Digital Media Consultant",
+        "email": "mailto:info@nathanbrenton.com",
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": "Orange County",
+          "addressRegion": "CA",
+          "addressCountry": "US"
+        },
+        "alumniOf": {
+          "@type": "CollegeOrUniversity",
+          "name": "Western Governors University"
+        },
+        "knowsAbout": [
+          "IT support",
+          "Email and DNS",
+          "Website development",
+          "Linux systems",
+          "Photography",
+          "Video production"
+        ],
+        "sameAs": [
+          "https://www.linkedin.com/in/nathanbrenton",
+          "https://github.com/nathanbrenton",
+          "https://www.youtube.com/@nathanbrenton",
+          "https://www.instagram.com/conceptgoretex/"
+        ]
+      }
+    ]
+  }
+  </script>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/pages.css" />
 </head>
@@ -33,7 +140,7 @@
           <a href="/about/">About</a>
           <a href="/contact/">Contact</a>
         </div>
-        <div class="social-nav" aria-label="Social links">
+        <div class="social-nav" role="group" aria-label="Social links">
           <a href="https://www.youtube.com/@nathanbrenton" data-link="youtube" target="_blank" rel="me noreferrer noopener" aria-label="YouTube" title="YouTube">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.2 3.6-6.2 3.6Z"/>
@@ -79,7 +186,7 @@
         <div class="primary-actions">
           <a class="button button-primary" href="/contact/">Get a quote</a>
           <a class="button button-secondary" href="/services/">See services</a>
-          <div class="hero-social-nav" aria-label="Social links">
+          <div class="hero-social-nav" role="group" aria-label="Social links">
             <a href="https://www.youtube.com/@nathanbrenton" data-link="youtube" target="_blank" rel="me noreferrer noopener" aria-label="YouTube" title="YouTube">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.2 3.6-6.2 3.6Z"/>
@@ -164,7 +271,7 @@
       <a href="/about/">About</a>
       <a href="/contact/">Contact</a>
     </nav>
-    <div class="social-nav footer-social" aria-label="Social links">
+    <div class="social-nav footer-social" role="group" aria-label="Social links">
       <a href="https://www.youtube.com/@nathanbrenton" data-link="youtube" target="_blank" rel="me noreferrer noopener" aria-label="YouTube" title="YouTube">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8ZM9.6 15.6V8.4l6.2 3.6-6.2 3.6Z"/>

@@ -56,6 +56,10 @@ main.home { margin-top: 0; padding-top: 12px; }
   .lede { font-size: 1.15rem; }
 }
 
+/* The hero text sits on the photo on phones; the muted grey is too faint
+   against its lighter patches, so use the secondary text color there. */
+.profile-card .location { color: var(--text-secondary); }
+
 /* Home hero: two buttons side by side once there is room. */
 @media (min-width: 480px) {
   .home .primary-actions { grid-template-columns: max-content max-content; justify-content: start; }

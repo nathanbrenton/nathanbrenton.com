@@ -245,6 +245,8 @@ for file in \
   styles.css \
   pages.css \
   404.html \
+  robots.txt \
+  sitemap.xml \
   services/index.html \
   work/index.html \
   about/index.html \
