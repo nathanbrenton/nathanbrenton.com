@@ -1,6 +1,6 @@
 WEB-PROD-01 — PRODUCTION REBUILD + MAIL + WEB + OBSERVABILITY RUNBOOK
 ====================================================================================
-Updated: 2026-08-25 (America/Los_Angeles) — Alloy + Loki local-log observability revision
+Updated: 2026-09-08 (America/Los_Angeles) — weekly PSI/OOM + post-commissioning monitoring revision
 Target: Debian 13 (trixie)
 Host:   web-prod-01
 FQDN:   web-prod-01.nathanbrenton.com
@@ -76,6 +76,57 @@ and operational boundaries. Troubleshooting detours are omitted except where
 they explain an important security property.
 
 
+2026-09-08 CURRENT MONITORING OVERRIDES / REBUILD INVARIANTS
+------------------------------------------------------------
+The monitoring stack continued to mature after the 2026-08-25 commissioning
+sections below were written. For a NEW server build, these current invariants
+supersede older commissioning-era wording where the two conflict:
+
+    - Grafana is an ON-DEMAND investigation UI. It is installed and
+      loopback-only, but intentionally inactive + disabled at boot on the
+      current approximately 1-GiB host. Monit must NOT treat an intentionally
+      stopped Grafana service as a failure.
+
+    - Loki + Alloy are always-on and are included in the local watchdog /
+      Prometheus target model.
+
+    - Independent Better Stack external monitoring is COMPLETE and should be
+      treated as part of the first-build monitoring architecture, not as a
+      future optional milestone.
+
+    - The public external checks are content-aware HTTPS monitors rather than
+      status-code-only checks. They verify expected site identity text as well
+      as public reachability/TLS.
+
+    - The daily report distinguishes core always-on services from on-demand
+      Grafana, includes trailing-24-hour alert activity, Linux OOM/PSI context,
+      observability/cache footprint, and real Fail2ban Ban/Unban history.
+
+    - The weekly report includes a dedicated seven-day memory-pressure section:
+          Kernel OOM kills
+          PSI memory "some" p95
+          PSI memory "full" p95
+
+    - The weekly PSI values depend on node_exporter exposing:
+          node_pressure_memory_waiting_seconds_total
+          node_pressure_memory_stalled_seconds_total
+
+      A rebuild must validate these two series before weekly-report
+      commissioning. Do not silently omit or fabricate the metric if the
+      destination kernel/node_exporter does not expose it.
+
+    - Host-shape numbers in this runbook (1 vCPU, ~1 GiB RAM, ~3 GiB swap,
+      30-GB root, and the resulting resource limits/thresholds) are
+      web-prod-01-specific. Reuse the architecture for another server, but
+      re-baseline RAM/CPU/swap/disk thresholds and cgroup limits against that
+      server's actual capacity and workload.
+
+The 2026-09-08 weekly memory-pressure implementation is informational in the
+digest. Existing Prometheus/Alertmanager production rules remain the source of
+incident thresholds; no extra public port, daemon, or alert rule is required
+solely to render the weekly PSI/OOM section.
+
+
 
 REBUILD ORDER — USE THIS SEQUENCE ON THE NEXT SERVER BUILD
 ----------------------------------------------------------
@@ -99,7 +150,10 @@ can be validated before the next layer depends on it:
        exposure; add public TCP/25 only after recipient/relay/SRS/TLS checks.
    13. Install server-health-report systemd service/timer.
    14. Install Monit local watchdog and native-SMTP alert delivery.
-   15. Install node_exporter on loopback TCP/9100.
+   15. Install node_exporter on loopback TCP/9100; verify host/systemd
+       telemetry AND node_pressure_memory_waiting_seconds_total /
+       node_pressure_memory_stalled_seconds_total before reporting depends on
+       them.
    16. Install Prometheus on loopback TCP/9090.
    17. Install Grafana OSS on loopback TCP/3000 with Prometheus datasource.
    18. Install Blackbox Exporter on loopback TCP/9115.
@@ -108,13 +162,15 @@ can be validated before the next layer depends on it:
    21. Install Alertmanager on loopback TCP/9093 with HA gossip disabled.
    22. Connect Prometheus to Alertmanager and load production rule files.
    23. Add independent Monit watchdogs for node_exporter, Prometheus,
-       Alertmanager, Blackbox Exporter and Grafana.
+       Alertmanager and Blackbox Exporter. Do not make Grafana an always-on
+       Monit dependency; its intended steady-state may be inactive.
    24. Run synthetic FIRING + RESOLVED tests, then remove test scaffolding.
    25. Run the complete Alerting v1 final audit.
    26. Install and validate Prometheus-backed Daily Server Health Report v2.
    27. Run one controlled systemd/mail delivery test and verify:
        service Result=success, status=sent, queue empty, timer enabled/active.
-   28. Install and validate the Weekly Operations Digest service/timer.
+   28. Install and validate the Weekly Operations Digest service/timer,
+       including seven-day Kernel OOM kills plus PSI memory some/full p95.
    29. Capacity-audit the host before adding log aggregation; inspect /tmp,
        /var/tmp, RAM, swap activity, PSI, journal volume and disk headroom.
    30. Install Loki in staged form, replace package defaults with the
@@ -128,8 +184,14 @@ can be validated before the next layer depends on it:
        authenticated Grafana Explore -> Loki query.
    34. Run steady-state and Grafana-on resource tests. Leave Grafana disabled
        at boot; Loki + Alloy remain enabled.
-   35. Run the final observability checkpoint. Independent external uptime
-       monitoring is the next recommended milestone.
+   35. Run the final local observability checkpoint.
+   36. Configure independent Better Stack HTTPS/content monitors for every
+       public site; keep internal observability listeners private.
+   37. Configure unique daily + weekly Better Stack heartbeat resources and
+       root-only URL files, then wire each report heartbeat after successful
+       local mail submission.
+   38. Run the external-monitoring + heartbeat audit and retain the complete
+       stack as the first-build production baseline.
 
 Do not expose Grafana, Prometheus, Alertmanager, node_exporter, or Blackbox
 Exporter directly to the public Internet. Administration remains through
@@ -2221,9 +2283,10 @@ Authoritative production form:
         with path "/usr/bin/systemctl is-active prometheus-blackbox-exporter.service"
         if status != 0 for 2 cycles then alert
 
-    check program grafana-systemd
-        with path "/usr/bin/systemctl is-active grafana-server.service"
-        if status != 0 for 2 cycles then alert
+    # Grafana is intentionally omitted from the always-on watchdog.
+    # Its normal steady-state on this resource-constrained host is:
+    #     inactive / disabled
+    # Starting it manually for investigation must not create an outage alert.
 
 Validated:
 
@@ -2234,7 +2297,6 @@ Validated:
     prometheus-systemd           OK
     alertmanager-systemd         OK
     blackbox-exporter-systemd    OK
-    grafana-systemd              OK
 
 
 ======================================================================
@@ -2676,7 +2738,11 @@ Target Monit summary:
     prometheus-systemd           OK
     alertmanager-systemd         OK
     blackbox-exporter-systemd    OK
-    grafana-systemd              OK
+    loki-systemd                 OK
+    alloy-systemd                OK
+
+    grafana-server:
+        intentionally not an always-on Monit check
 
 
 ======================================================================
@@ -2785,8 +2851,9 @@ If the entire VPS is powered off, unreachable, disconnected, or unable to
 route outbound mail, software on that same VPS cannot send an alert describing
 that outage.
 
-Optional future improvement:
-    independent external uptime monitoring.
+Current production mitigation:
+    independent Better Stack HTTPS/content monitoring plus daily/weekly
+    report heartbeats. This external layer is part of the rebuild baseline.
 
 
 ======================================================================
@@ -3300,6 +3367,28 @@ Systemd-specific validation:
     curl -fsS http://127.0.0.1:9100/metrics |
       grep -E '^node_systemd_(unit_state|service_restart_total|unit_start_time_seconds|timer_last_trigger_seconds)' |
       head -40
+
+Memory Pressure Stall Information (PSI) validation — REQUIRED before the
+weekly report is commissioned:
+
+    curl -fsS http://127.0.0.1:9100/metrics |
+      grep -E '^node_pressure_memory_(waiting|stalled)_seconds_total'
+
+Expected on the current Debian 13 / node_exporter build:
+
+    node_pressure_memory_stalled_seconds_total ...
+    node_pressure_memory_waiting_seconds_total ...
+
+Prometheus-side validation after the node scrape is active:
+
+    curl -fsSG \
+      --data-urlencode \
+      'query={__name__=~"node_pressure_memory_(waiting|stalled)_seconds_total"}' \
+      http://127.0.0.1:9090/api/v1/query
+
+The weekly digest depends on these counters. If either series is absent on a
+different kernel/distribution/node_exporter release, stop and determine the
+correct platform support/collector behavior rather than reporting a fake 0.
 
 
 ======================================================================
@@ -4755,13 +4844,14 @@ Run after the full rebuild.
 Service / listener validation
 -----------------------------
 
-    echo "===== OBSERVABILITY SERVICES ====="
+    echo "===== ALWAYS-ON OBSERVABILITY SERVICES ====="
 
     for svc in \
-      grafana-server \
       prometheus \
       node_exporter \
-      prometheus-blackbox-exporter
+      prometheus-blackbox-exporter \
+      loki \
+      alloy
     do
       printf '%-32s active=%-10s enabled=%s\n' \
         "$svc" \
@@ -4770,10 +4860,17 @@ Service / listener validation
     done
 
     echo
+    echo "===== GRAFANA ON-DEMAND POLICY ====="
+    printf '%-32s active=%-10s enabled=%s\n' \
+      grafana-server \
+      "$(systemctl is-active grafana-server 2>/dev/null)" \
+      "$(systemctl is-enabled grafana-server 2>/dev/null)"
+
+    echo
     echo "===== PRIVATE LISTENERS ====="
 
     sudo ss -lntp |
-      grep -E ':(3000|9090|9100|9115)[[:space:]]'
+      grep -E ':(3000|9090|9100|9115|3100|9096|12345)[[:space:]]' || true
 
     echo
     echo "===== PROMETHEUS CONFIG ====="
@@ -4781,8 +4878,10 @@ Service / listener validation
     sudo promtool check config /etc/prometheus/prometheus.yml
 
 Expected:
-    all four services active + enabled
-    all four listeners on 127.0.0.1 only
+    Prometheus/node_exporter/Blackbox/Loki/Alloy active + enabled
+    Grafana inactive + disabled in steady state
+    all present observability listeners bound to 127.0.0.1 only
+    TCP/3000 absent while Grafana is stopped
     Prometheus config SUCCESS
 
 Live Prometheus checks
@@ -5089,13 +5188,14 @@ PrometheusTargetDown includes:
     loki
     alloy
 
-NEXT RECOMMENDED MILESTONE:
+INDEPENDENT EXTERNAL UPTIME + HEARTBEAT MONITORING:
 
-    independent EXTERNAL uptime monitoring
+    COMPLETE
 
-Reason:
+Reason it remains required on rebuild:
     same-host monitoring cannot detect/report complete VPS loss while the
-    server itself is unreachable.
+    server itself is unreachable. Better Stack supplies that independent
+    failure domain without exposing internal observability listeners.
 
 OPTIONAL / WHEN APPLICATION NEED JUSTIFIES IT:
 
@@ -5771,9 +5871,8 @@ Checks added:
         with path "/usr/bin/systemctl is-active prometheus-blackbox-exporter.service"
         if status != 0 for 2 cycles then alert
 
-    check program grafana-systemd
-        with path "/usr/bin/systemctl is-active grafana-server.service"
-        if status != 0 for 2 cycles then alert
+    # Grafana is deliberately NOT present here. It is an on-demand
+    # investigation UI and may normally be inactive/disabled.
 
 At a 120-second Monit interval, two failed cycles are approximately four
 minutes of sustained failure.
@@ -5814,7 +5913,9 @@ Validated final states:
     prometheus-systemd           OK
     alertmanager-systemd         OK
     blackbox-exporter-systemd    OK
-    grafana-systemd              OK
+
+    grafana-server:
+        intentionally excluded from the always-on Monit watchdog
 
     sudo monit -t
         Control file syntax OK
@@ -5831,7 +5932,6 @@ Core service target
     prometheus
     prometheus-alertmanager
     prometheus-blackbox-exporter
-    grafana-server
     monit
     postfix
 
@@ -5840,17 +5940,27 @@ Expected:
     active
     enabled
 
+Grafana policy is validated separately:
+
+    grafana-server
+        active:   inactive
+        enabled:  disabled
+
 
 Private listeners
 -----------------
 
-Expected:
+Expected always-on:
 
-    127.0.0.1:3000
     127.0.0.1:9090
     127.0.0.1:9093
     127.0.0.1:9100
     127.0.0.1:9115
+
+Grafana:
+
+    127.0.0.1:3000 only while Grafana is intentionally started
+    no :3000 listener is expected in normal steady state
 
 Unexpected:
 
@@ -6195,7 +6305,10 @@ and:
 Service inventory
 -----------------
 
-v2 reports current state for:
+The current daily report separates ALWAYS-ON core services from ON-DEMAND
+services.
+
+CORE SERVICES expected active:
 
     ssh
     nginx
@@ -6209,13 +6322,52 @@ v2 reports current state for:
     prometheus
     prometheus-alertmanager
     prometheus-blackbox-exporter
+    loki
+    alloy
+
+ON-DEMAND SERVICES expected policy:
+
     grafana-server
+        inactive / disabled (expected)
 
-Expected healthy state:
+An intentionally stopped Grafana service must NOT change an otherwise healthy
+daily report to WARNING.
 
-    active
 
-There are 13 services in the daily operational service table.
+Post-commissioning daily-report additions
+-----------------------------------------
+
+The current report also includes:
+
+    ALERT ACTIVITY — LAST 24 HOURS
+        actionable series seen
+        all series seen, including informational/test series
+        currently firing
+        currently pending
+
+    MEMORY PRESSURE — LAST 24 HOURS
+        kernel OOM kill events
+        /proc/pressure/memory "some"
+        /proc/pressure/memory "full"
+
+    OBSERVABILITY / CACHE FOOTPRINT
+        Loki
+        Prometheus
+        Grafana
+        systemd journal
+        APT package cache
+
+    FAIL2BAN / SSH — LAST 24 HOURS
+        auth-related log-entry count
+        new bans
+        unbans
+        unique IPs banned
+        current failed/banned counts
+        lifetime failed/banned counts
+
+Fail2ban Ban/Unban history is read from /var/log/fail2ban.log and rotated
+Fail2ban logs. Do not assume the systemd journal contains the complete action
+history.
 
 
 Presentation fixes validated during commissioning
@@ -6529,6 +6681,12 @@ RESOURCE TRENDS — 7 DAYS:
     swap-out average
     swap-out high
 
+MEMORY PRESSURE — 7 DAYS:
+
+    Kernel OOM kills
+    PSI memory "some" p95
+    PSI memory "full" p95
+
 STORAGE:
 
     current root use
@@ -6546,6 +6704,69 @@ WARNINGS / SUMMARY:
 
     current actionable warnings
     plain-language operational summary
+
+
+Weekly memory-pressure implementation — 2026-09-08
+---------------------------------------------------
+
+The weekly digest reports pressure separately from ordinary RAM utilization.
+
+Required node_exporter counters:
+
+    node_pressure_memory_waiting_seconds_total
+    node_pressure_memory_stalled_seconds_total
+
+Seven-day PSI "some" p95:
+
+    quantile_over_time(
+      0.95,
+      (
+        100 *
+        rate(node_pressure_memory_waiting_seconds_total[5m])
+      )[7d:5m]
+    )
+
+Seven-day PSI "full" p95:
+
+    quantile_over_time(
+      0.95,
+      (
+        100 *
+        rate(node_pressure_memory_stalled_seconds_total[5m])
+      )[7d:5m]
+    )
+
+The multiplication by 100 converts the stall-time ratio into percentage of
+wall time. Report with four decimal places so a healthy low-pressure host does
+not collapse useful resolution into 0.00%.
+
+Kernel OOM history is read directly from the kernel journal for the trailing
+seven days. Count standard records matching:
+
+    Out of memory: Killed process <PID>
+
+rather than every OOM-related log line, to reduce double-counting of a single
+kill event.
+
+Current report shape:
+
+    MEMORY PRESSURE — 7 DAYS
+    ------------------------
+    Kernel OOM kills:     0
+    PSI some p95:         0.0004%
+    PSI full p95:         0.0003%
+    Note: PSI is percentage of wall time delayed by memory pressure.
+
+The values above are an example validated on 2026-09-08 and are NOT fixed
+thresholds. The destination server's real measurements must populate them.
+
+If Prometheus is unavailable, PSI fields follow the report's existing graceful
+degradation policy and render n/a. Kernel OOM history remains a direct local
+check.
+
+This weekly section is informational. Do not add a duplicate incident rule
+solely to reproduce the digest. Existing production Prometheus/Alertmanager
+resource rules remain authoritative for incidents.
 
 
 Alertmanager counter semantics
@@ -6636,6 +6857,30 @@ Validated preview:
 Commissioning high-water marks may include maintenance/configuration activity.
 The averages and p95 values are the better representation of normal operating
 pressure during this initial period.
+
+
+Post-commissioning weekly memory-pressure validation — 2026-09-08
+-----------------------------------------------------------------
+
+Validated installed script SHA256:
+
+    7dcaa8f8ad730e1abe5a7d5c33563ba3111676a0d7a8f9688ff433a0f33bb652
+
+Validated preview included:
+
+    Kernel OOM kills:     0
+    PSI some p95:         0.0004%
+    PSI full p95:         0.0003%
+
+Validation also confirmed:
+
+    weekly report syntax: PASS
+    timer enabled:        yes
+    timer active:         yes
+    preview sent email:   no
+    service restart:      none
+
+This is the current canonical weekly-report behavior for future rebuilds.
 
 
 Controlled weekly mail test
@@ -6950,9 +7195,13 @@ CURRENT OPERATIONS MODEL:
     investigation:
         Grafana, started only when needed
 
-NEXT RECOMMENDED OBSERVABILITY MILESTONE:
+INDEPENDENT EXTERNAL UPTIME + HEARTBEAT MONITORING:
 
-    independent external uptime monitoring
+    COMPLETE
+
+The next operations task is steady-state review and project-specific
+application telemetry only when justified; do not add another always-on daemon
+merely to expand the tool list.
 
 
 
@@ -7933,14 +8182,33 @@ Commissioned canonical public-site monitors:
     https://nathanbrenton.com/
 
 Monitor purpose:
-    detect public HTTPS unavailability independently of web-prod-01.
+    detect public HTTPS/TLS/content failure independently of web-prod-01.
 
-Initial alerting posture:
-    - URL-unavailable incident condition;
-    - primary responder notification;
-    - email enabled;
-    - phone/SMS escalation not required for initial commissioning;
-    - no deliberate production outage is required for testing.
+Current low-noise monitor posture after post-commissioning tuning:
+    - HTTP method: GET
+    - check frequency: 3 minutes
+    - confirmation period: 3 minutes
+    - recovery period: 3 minutes
+    - request timeout: 10 seconds
+    - follow redirects: enabled
+    - SSL/TLS verification: enabled
+    - IP version: both IPv4 and IPv6
+    - geographically distributed checks retained
+    - no recurring maintenance window
+    - primary responder email enabled
+    - phone/SMS escalation not required for current scale
+    - no deliberate production outage is required for testing
+
+Content expectations:
+
+    hiplingo.com
+        response must contain: Hiplingo
+
+    nathanbrenton.com
+        response must contain: Nathan Brenton
+
+This catches a healthy HTTP transport that accidentally serves an empty,
+default, or wrong page in addition to ordinary reachability failures.
 
 A Better Stack test-incident email was received during commissioning, proving
 the external notification path without intentionally taking either production
@@ -8034,11 +8302,15 @@ After heartbeat integration and validation:
 
     /usr/local/sbin/server-health-report
     SHA256:
-        dd5c42403898bf18a9640af12d6269ee6d3a1b77395e45d498a159e6401ae5de
+        7d836889eeaa6828eac4d853621f7a2217010fc8a5800b1ad7215e256107bbad
 
     /usr/local/sbin/server-weekly-report
     SHA256:
-        4c0862cb5a6a5f3995cc5d20d3ae9a01d00737e83d24babe3f97b347d31330a0
+        7dcaa8f8ad730e1abe5a7d5c33563ba3111676a0d7a8f9688ff433a0f33bb652
+
+These hashes describe the validated web-prod-01 deployment at this revision.
+They are drift-detection checkpoints, not portable constants for another
+project whose site targets/identity may differ.
 
 Heartbeat implementation characteristics
 ----------------------------------------
@@ -8290,6 +8562,12 @@ Validated/current:
         hiplingo.com monitor commissioned
         nathanbrenton.com monitor commissioned
         independent of web-prod-01 local observability services
+        GET + redirects + TLS verification
+        IPv4 + IPv6
+        3-minute check / confirmation / recovery posture
+        10-second request timeout
+        content check: Hiplingo
+        content check: Nathan Brenton
 
     External notifications:
         Better Stack test-incident email received
@@ -8347,6 +8625,130 @@ NEXT RECOMMENDED OPERATIONS STEP:
     Loki disk growth, memory PSI/swap I/O, and alert usefulness during normal
     operation. Application-level listener/usage analytics should remain a
     separate design concern from host availability monitoring.
+
+
+======================================================================
+61. PORTABLE FIRST-BUILD MONITORING REQUIREMENTS — OTHER PROJECTS
+======================================================================
+
+Purpose
+-------
+Use web-prod-01 as a reference implementation for future public servers such
+as D'Acqua Dolce without copying host-specific capacity assumptions.
+
+Architecture to preserve where appropriate
+------------------------------------------
+    systemd
+        authoritative service lifecycle
+
+    Monit
+        independent local alert-only watchdog
+
+    node_exporter -> Prometheus
+        host metrics + systemd metrics + Linux PSI counters
+
+    Blackbox Exporter -> Prometheus
+        local public-HTTPS availability/latency/TLS telemetry
+
+    Prometheus -> Alertmanager -> Postfix
+        immediate rule-driven operations email
+
+    Daily health report -> Postfix
+        trailing 24-hour digest + direct host checks
+
+    Weekly operations digest -> Postfix
+        trailing seven-day trends INCLUDING:
+            Kernel OOM kills
+            PSI memory some p95
+            PSI memory full p95
+
+    Alloy -> Loki
+        bounded local log collection/storage when justified
+
+    Grafana
+        private investigation UI; on-demand or always-on according to measured
+        capacity, never according to habit
+
+    independent external monitor
+        public HTTPS/TLS/content checks outside the VPS failure domain
+
+    external heartbeats
+        daily + weekly report completion monitors
+
+
+Values that MUST be re-derived for a different server
+------------------------------------------------------
+Do not blindly copy:
+
+    CPU/RAM alert percentages
+    sustained-cycle durations
+    swap size
+    disk thresholds/growth assumptions
+    Prometheus retention size/time
+    Loki retention/resource limits
+    Alloy resource limits
+    Grafana boot policy
+    cgroup MemoryHigh/MemoryMax/GOMEMLIMIT
+    public IP
+    FQDN/domain targets
+    operations email aliases
+    deployment identities/paths
+
+The first build should establish measured baseline behavior before finalizing
+capacity-sensitive thresholds.
+
+
+Weekly PSI/OOM first-build gate
+-------------------------------
+Before installing/commissioning server-weekly-report:
+
+    1. prove node_exporter is serving both:
+           node_pressure_memory_waiting_seconds_total
+           node_pressure_memory_stalled_seconds_total
+
+    2. prove Prometheus has both series;
+
+    3. run the two 7-day p95 PromQL expressions (shorter history is acceptable
+       during first commissioning; the result will mature as retention fills);
+
+    4. verify kernel journal access for OOM history;
+
+    5. run server-weekly-report --preview and require the MEMORY PRESSURE
+       section to render;
+
+    6. only then perform the controlled systemd/mail test and enable/retain the
+       weekly timer.
+
+No additional daemon, public listener, or new alert rule is required for this
+metric.
+
+
+Source-of-truth recommendation
+------------------------------
+This runbook documents behavior and rebuild requirements, but prose should not
+be the only durable source for custom executables.
+
+For reproducible future builds, keep source-controlled canonical templates for
+at least:
+
+    server-health-report
+    server-weekly-report
+    server-health-report.service
+    server-health-report.timer
+    server-weekly-report.service
+    server-weekly-report.timer
+    Prometheus rule files
+    Prometheus/Alertmanager relevant config templates
+    Monit monitoring snippets
+
+Parameterize host/domain/email/capacity values rather than forking opaque
+copies wherever practical.
+
+If such canonical script/template files already exist elsewhere in the
+repository, update server-weekly-report there with the 2026-09-08 PSI/OOM
+implementation as well. If they do NOT yet exist, creating them is the one
+remaining step required to make "first build" reproducible without asking a
+future GPT to reconstruct executable code from prose.
 
 
 END OF RUNBOOK
