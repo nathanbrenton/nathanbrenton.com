@@ -265,3 +265,12 @@ main.home { margin-top: 0; padding-top: 12px; }
 .site-footer p { margin: 0; }
 .footer-nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; }
 .footer-nav a { display: inline-block; padding: 8px 0; }
+
+.field-error {
+  margin: 6px 0 0;
+  color: #f09a8e;
+  font-size: .9rem;
+  font-weight: 600;
+}
+.form-done:focus { outline: none; }
+.form-done h2 { color: var(--gold); }

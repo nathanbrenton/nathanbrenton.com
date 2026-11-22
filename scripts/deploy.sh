@@ -241,6 +241,7 @@ printf '\n----- Required public files -----\n'
 for file in \
   index.html \
   script.js \
+  quote-form.js \
   site-data.js \
   styles.css \
   pages.css \

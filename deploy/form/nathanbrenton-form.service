@@ -1,0 +1,48 @@
+# nathanbrenton.com: quote request form -> Postmark.
+# Install as /etc/systemd/system/nathanbrenton-form.service (see docs/nathanbrenton.com-form-service.md).
+# Own unit, throwaway user, no files written. Separate from Hiplingo's services.
+
+[Unit]
+Description=nathanbrenton.com quote form (requests to Postmark)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /opt/nathanbrenton-form/nb_form.py
+Environment=NB_FORM_PORT=18770
+# info@ is received by this host's Postfix and forwarded to the private business inbox.
+Environment="NB_FORM_TO=info@nathanbrenton.com"
+Environment="NB_FORM_FROM=Nathan Brenton website <website@nathanbrenton.com>"
+# The nathanbrenton.com Postmark server token, readable only by root on disk.
+LoadCredential=postmark-token:/etc/nathanbrenton-form/postmark-token
+Restart=on-failure
+RestartSec=5
+
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+# web-prod-01 has about 1 GiB of memory; this service needs ~20 MB.
+MemoryMax=64M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

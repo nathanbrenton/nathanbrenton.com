@@ -103,15 +103,19 @@
           <legend>About you</legend>
           <div class="field">
             <label for="q-name">Name <span class="req">(required)</span></label>
-            <input id="q-name" name="name" type="text" autocomplete="name" autocapitalize="words" spellcheck="false" required maxlength="100" />
+            <input id="q-name" name="name" type="text" autocomplete="name" autocapitalize="words" spellcheck="false" required maxlength="100" aria-describedby="err-name" />
+            <p class="field-error" id="err-name" hidden></p>
           </div>
           <div class="field">
             <label for="q-email">Email <span class="req">(required)</span></label>
-            <input id="q-email" name="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="200" />
+            <input id="q-email" name="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" aria-describedby="err-email" />
+            <p class="field-error" id="err-email" hidden></p>
           </div>
           <div class="field">
             <label for="q-phone">Phone</label>
-            <input id="q-phone" name="phone" type="tel" autocomplete="tel" maxlength="30" />
+            <input id="q-phone" name="phone" type="tel" autocomplete="tel" maxlength="30" aria-describedby="q-phone-hint err-phone" />
+            <p class="hint" id="q-phone-hint">Needed if you'd like a call or text.</p>
+            <p class="field-error" id="err-phone" hidden></p>
           </div>
           <div class="field">
             <label for="q-org">Business or organization</label>
@@ -145,7 +149,8 @@
           </div>
           <div class="field">
             <label for="q-details">Tell me about the job <span class="req">(required)</span></label>
-            <textarea id="q-details" name="details" rows="6" required maxlength="4000" aria-describedby="q-details-hint"></textarea>
+            <textarea id="q-details" name="details" rows="6" required maxlength="4000" aria-describedby="q-details-hint err-details"></textarea>
+            <p class="field-error" id="err-details" hidden></p>
             <p class="hint" id="q-details-hint">What's happening now, what you'd like instead, and anything already in place (your current website address, email provider, number of computers, and so on).</p>
           </div>
           <div class="field">
@@ -188,7 +193,7 @@
           <label for="q-website">Leave this empty</label>
           <input id="q-website" name="website" type="text" tabindex="-1" autocomplete="off" />
         </div>
-        <input type="hidden" name="started" value="" />
+        <input type="hidden" name="t" value="" />
 
         <button class="button button-primary" type="submit">Send request</button>
         <p class="form-status" role="status" aria-live="polite"></p>
@@ -232,5 +237,6 @@
 
   <script src="/site-data.js"></script>
   <script src="/script.js"></script>
+  <script src="/quote-form.js"></script>
 </body>
 </html>
