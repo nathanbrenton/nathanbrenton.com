@@ -3,7 +3,9 @@
   if (year) year.textContent = new Date().getFullYear();
 
   const profileImage = document.querySelector('.avatar img');
-  profileImage?.addEventListener('error', () => profileImage.remove(), { once: true });
+  // The image may have failed before this script ran, so check as well as listen.
+  if (profileImage?.complete && profileImage.naturalWidth === 0) profileImage.remove();
+  else profileImage?.addEventListener('error', () => profileImage.remove(), { once: true });
 
   const config = window.NATHAN_SITE || {};
   const links = config.links || {};

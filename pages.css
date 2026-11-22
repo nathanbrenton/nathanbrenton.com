@@ -1,0 +1,263 @@
+/* Multi-page additions on top of styles.css: page navigation, inner-page
+   layout, services, contact form. Mobile-first: base rules are the phone
+   layout; min-width queries add the wider layouts. */
+
+/* ---------- Header: visible on every page, on phones too ---------- */
+.site-header { display: flex; }
+html { scroll-padding-top: calc(var(--header-height) + 12px); }
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: .9rem;
+}
+.page-nav a {
+  padding: 10px 0;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.page-nav a:hover { color: var(--text-primary); }
+.page-nav a[aria-current="page"] { color: var(--gold); }
+
+/* Social icons live in the footer and home hero on phones. */
+.top-nav .social-nav { display: none; }
+
+@media (min-width: 700px) {
+  .page-nav { gap: 24px; }
+  .top-nav .social-nav { display: flex; }
+}
+
+/* ---------- Inner pages ---------- */
+main.page {
+  margin-top: 0;
+  padding-top: 20px;
+}
+main.home { margin-top: 0; padding-top: 12px; }
+@media (min-width: 700px) {
+  main.page { padding-top: 36px; }
+  main.home { padding-top: 18px; }
+}
+
+.page-header {
+  padding: 8px 4px 14px;
+}
+.page-header h1 { margin-bottom: 12px; }
+.lede {
+  max-width: 62ch;
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+}
+.page-header .primary-actions { margin-top: 18px; }
+@media (min-width: 700px) {
+  .page-header { padding: 8px 4px 22px; }
+  .page-header .primary-actions { grid-template-columns: max-content max-content; justify-content: start; }
+  .lede { font-size: 1.15rem; }
+}
+
+/* Home hero: two buttons side by side once there is room. */
+@media (min-width: 480px) {
+  .home .primary-actions { grid-template-columns: max-content max-content; justify-content: start; }
+  .home .hero-social-nav { grid-column: 1 / -1; justify-content: flex-start; }
+}
+
+/* styles.css lays the old one-page site out on a 12-column grid at desktop
+   widths and pins some sections to fixed rows. On these pages every section
+   spans the full width, in source order. Inner pages stay narrower for reading. */
+@media (min-width: 1040px) {
+  main > * { grid-column: 1 / -1; }
+  .split-section, .scroll-reward { grid-row: auto; }
+  main.page { width: min(calc(100% - 48px), 1040px); }
+}
+
+/* ---------- Lists ---------- */
+.check-list, .point-list, .step-list {
+  margin: 0;
+  padding: 0;
+  max-width: var(--readable);
+}
+.check-list { list-style: none; }
+.check-list li {
+  position: relative;
+  padding-left: 26px;
+}
+.check-list li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: .5em;
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid var(--green-bright);
+  border-bottom: 2px solid var(--green-bright);
+  transform: rotate(-45deg);
+}
+.check-list li + li, .point-list li + li, .step-list li + li { margin-top: 9px; }
+.point-list { list-style: none; }
+.step-list { padding-left: 22px; }
+.step-list li::marker { color: var(--gold); font-weight: 800; }
+.section-card a:not(.button):not(.text-link):not(.project-card__title-link) { color: var(--cyan); }
+
+/* ---------- Services ---------- */
+.service-grid { display: grid; gap: 12px; }
+.service-card {
+  display: block;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255,255,255,.018), transparent 34%), var(--surface-2);
+  box-shadow: var(--shadow-2);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: border-color 160ms ease;
+}
+.service-card:hover { border-color: var(--border-strong); }
+.service-card h3 { color: var(--gold); }
+.service-card p { margin-bottom: 0; color: var(--text-secondary); }
+@media (min-width: 700px) {
+  .service-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.service-section h2 { margin-bottom: 8px; }
+.service-section > p { color: var(--text-secondary); }
+.service-section { scroll-margin-top: calc(var(--header-height) + 12px); }
+
+.jump-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.jump-nav a {
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: .85rem;
+  text-decoration: none;
+}
+.jump-nav a:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+.pricing-placeholder { border-style: dashed; border-color: var(--border-strong); }
+.placeholder-card { color: var(--text-secondary); border-style: dashed; }
+.placeholder-card p { margin: 0; }
+
+.cta-card { text-align: center; }
+.cta-card p { margin-inline: auto; color: var(--text-secondary); }
+
+/* ---------- Quote form ---------- */
+.quote-form fieldset {
+  margin: 0 0 22px;
+  padding: 0;
+  border: 0;
+}
+.quote-form legend {
+  margin-bottom: 12px;
+  padding: 0;
+  color: var(--gold);
+  font-size: .78rem;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.field { margin-bottom: 16px; }
+.field > label, .field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+.req { color: var(--text-muted); font-weight: 400; font-size: .85em; }
+.hint { margin: 6px 0 0; color: var(--text-muted); font-size: .85rem; }
+
+.quote-form input[type="text"],
+.quote-form input[type="email"],
+.quote-form input[type="tel"],
+.quote-form textarea,
+.quote-form select {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 1rem; /* 16px keeps iOS from zooming on focus */
+}
+.quote-form textarea { min-height: 140px; resize: vertical; }
+.quote-form input:focus-visible,
+.quote-form textarea:focus-visible,
+.quote-form select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.quote-form [aria-invalid="true"] { border-color: #e0685a; }
+
+.choice-row, .choice-grid { display: grid; gap: 4px; }
+.choice-row label, .choice-grid label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.choice-row input, .choice-grid input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--gold);
+}
+.field-pair { display: grid; gap: 0 16px; }
+
+@media (min-width: 560px) {
+  .choice-row { grid-auto-flow: column; justify-content: start; gap: 22px; }
+  .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+  .field-pair { grid-template-columns: 1fr 1fr; }
+}
+
+.trap {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.quote-form button[type="submit"] { width: 100%; border: 0; font: inherit; font-weight: 800; cursor: pointer; }
+@media (min-width: 560px) {
+  .quote-form button[type="submit"] { width: auto; min-width: 200px; }
+}
+.form-status { margin: 12px 0 0; min-height: 1.5em; }
+.form-status.is-error { color: #f09a8e; }
+.form-status.is-ok { color: var(--green-bright); }
+.form-alt { margin: 18px 0 0; color: var(--text-muted); font-size: .9rem; }
+
+/* ---------- Case study template pieces ---------- */
+.client-quote {
+  margin: 0;
+  padding-left: 16px;
+  border-left: 3px solid var(--gold);
+  font-size: 1.08rem;
+}
+.client-quote footer { margin-top: 8px; color: var(--text-muted); font-size: .9rem; }
+.detail-list { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; }
+.detail-list dt { color: var(--text-muted); }
+.detail-list dd { margin: 0; }
+
+/* ---------- Footer ---------- */
+.site-footer {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 10px 4px 36px;
+  color: var(--text-muted);
+  font-size: .85rem;
+  text-align: center;
+}
+.site-footer p { margin: 0; }
+.footer-nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; }
+.footer-nav a { display: inline-block; padding: 8px 0; }

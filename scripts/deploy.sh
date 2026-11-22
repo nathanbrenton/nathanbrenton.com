@@ -16,6 +16,7 @@ RSYNC_EXCLUDES=(
   --exclude='docs/'
   --exclude='scripts/'
   --exclude='source-assets/'
+  --exclude='_templates/'
 )
 
 fail() {
@@ -226,6 +227,7 @@ ssh -n "$REMOTE" "\
   test ! -e \"\$R/docs\" && \
   test ! -e \"\$R/scripts\" && \
   test ! -e \"\$R/source-assets\" && \
+  test ! -e \"\$R/_templates\" && \
   test ! -e \"\$R/.git\" && \
   test ! -e \"\$R/.gitignore\" && \
   ! find \"\$R\" \\( -name '.DS_Store' -o -name '.gitkeep' \\) -print -quit | grep -q ." ||
@@ -241,6 +243,12 @@ for file in \
   script.js \
   site-data.js \
   styles.css \
+  pages.css \
+  404.html \
+  services/index.html \
+  work/index.html \
+  about/index.html \
+  contact/index.html \
   resume/Nathan-Brenton-Resume.pdf
 do
   ssh -n "$REMOTE" \
