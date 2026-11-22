@@ -12,7 +12,7 @@ ExecStart=/usr/bin/python3 -I /opt/nathanbrenton-form/nb_form.py
 Environment=NB_FORM_PORT=18770
 # info@ is received by this host's Postfix and forwarded to the private business inbox.
 Environment="NB_FORM_TO=info@nathanbrenton.com"
-Environment="NB_FORM_FROM=Nathan Brenton website <website@nathanbrenton.com>"
+Environment="NB_FORM_FROM=\"nathanbrenton.com\" <website@nathanbrenton.com>"
 # The nathanbrenton.com Postmark server token, readable only by root on disk.
 LoadCredential=postmark-token:/etc/nathanbrenton-form/postmark-token
 Restart=on-failure

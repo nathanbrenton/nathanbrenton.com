@@ -192,7 +192,7 @@ def compose(f):
         '<br>Reply to this email to answer them.</p></div>')
 
     return {
-        "From": os.environ.get("NB_FORM_FROM", "Nathan Brenton website <website@nathanbrenton.com>"),
+        "From": os.environ.get("NB_FORM_FROM", '"nathanbrenton.com" <website@nathanbrenton.com>'),
         "To": os.environ.get("NB_FORM_TO", CONTACT_EMAIL),
         "ReplyTo": f'"{f["name"].replace(chr(34), "")}" <{f["email"]}>',
         "Subject": subject,
