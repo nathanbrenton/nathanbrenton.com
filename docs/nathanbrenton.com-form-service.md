@@ -38,17 +38,22 @@ then open http://127.0.0.1:18770/contact/.
 Each step is done once. Steps marked **(Nathan)** are run by Nathan; the rest are read-only or rsync.
 
 ### 1. Postmark (Nathan, in the browser)
+Done 2026-11-22: server `nathanbrenton.com` created in Nathan's own Postmark account; the domain
+was already verified there (DKIM + Return-Path `pm-bounces` → `pm.mtasv.net`).
+
 Create a Server for nathanbrenton.com, add the Sender Signature domain `nathanbrenton.com`, and
 note the DKIM and Return-Path DNS records Postmark shows. Never paste the API token into chat.
 
 ### 2. DNS (Nathan, Google Cloud DNS)
-Add the two records from step 1 (a DKIM `TXT` at `<selector>._domainkey` and a `CNAME`
+Already in place as of 2026-11-22 (nothing to add). For a fresh domain: add the two records from step 1 (a DKIM `TXT` at `<selector>._domainkey` and a `CNAME`
 `pm-bounces` → `pm.mtasv.net`), then press Verify in Postmark for both.
 
 ### 3. Stage the files on the host (from this Mac)
+Staged through the deploy account into `/tmp` (the `n8` login needs Nathan's key unlocked).
+The files hold no secrets; compare the checksums before installing.
 
 ```bash
-TS=$(date -u +%Y%m%dT%H%M%SZ); ssh web-prod-01 mkdir -p nathanbrenton-staging/$TS && rsync -a ~/Desktop/websites/nathanbrenton.com/deploy/form ~/Desktop/websites/nathanbrenton.com/deploy/nginx web-prod-01:nathanbrenton-staging/$TS/ && echo $TS
+cd ~/Desktop/websites/nathanbrenton.com && TS=$(date -u +%Y%m%dT%H%M%SZ) && D=/tmp/nathanbrenton-staging/$TS && ssh nathan-prod "umask 022; mkdir -p $D/form $D/nginx" && rsync -a deploy/form/nb_form.py deploy/form/nathanbrenton-form.service nathan-prod:$D/form/ && rsync -a deploy/nginx/nathanbrenton.com.conf deploy/nginx/nathanbrenton-com-http.conf nathan-prod:$D/nginx/ && echo $TS && shasum -a 256 deploy/form/nb_form.py deploy/form/nathanbrenton-form.service deploy/nginx/nathanbrenton*.conf
 ```
 
 ### 4. Form service (Nathan, on web-prod-01)
@@ -58,10 +63,10 @@ nathanbrenton.com server → API Tokens.
 ```bash
 TS=<the timestamp printed in step 3>
 sudo install -d -m 755 -o root -g root /opt/nathanbrenton-form
-sudo install -m 644 -o root -g root ~/nathanbrenton-staging/$TS/form/nb_form.py /opt/nathanbrenton-form/nb_form.py
+sudo install -m 644 -o root -g root /tmp/nathanbrenton-staging/$TS/form/nb_form.py /opt/nathanbrenton-form/nb_form.py
 sudo install -d -m 700 -o root -g root /etc/nathanbrenton-form
 sudo bash -c 'umask 077; read -rsp "Postmark server token: " t; echo; printf %s "$t" > /etc/nathanbrenton-form/postmark-token'
-sudo install -m 644 -o root -g root ~/nathanbrenton-staging/$TS/form/nathanbrenton-form.service /etc/systemd/system/nathanbrenton-form.service
+sudo install -m 644 -o root -g root /tmp/nathanbrenton-staging/$TS/form/nathanbrenton-form.service /etc/systemd/system/nathanbrenton-form.service
 sudo systemctl daemon-reload && sudo systemctl enable --now nathanbrenton-form
 curl -s http://127.0.0.1:18770/api/health
 ```
@@ -73,8 +78,8 @@ Back up the live file outside nginx's include paths, install, test, reload:
 
 ```bash
 sudo install -d -m 700 /root/nginx-backups && sudo cp -a /etc/nginx/sites-available/nathanbrenton.com /root/nginx-backups/nathanbrenton.com.$TS
-sudo install -m 644 -o root -g root ~/nathanbrenton-staging/$TS/nginx/nathanbrenton-com-http.conf /etc/nginx/conf.d/nathanbrenton-com-http.conf
-sudo install -m 644 -o root -g root ~/nathanbrenton-staging/$TS/nginx/nathanbrenton.com.conf /etc/nginx/sites-available/nathanbrenton.com
+sudo install -m 644 -o root -g root /tmp/nathanbrenton-staging/$TS/nginx/nathanbrenton-com-http.conf /etc/nginx/conf.d/nathanbrenton-com-http.conf
+sudo install -m 644 -o root -g root /tmp/nathanbrenton-staging/$TS/nginx/nathanbrenton.com.conf /etc/nginx/sites-available/nathanbrenton.com
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot renew --dry-run --cert-name nathanbrenton.com
 ```
