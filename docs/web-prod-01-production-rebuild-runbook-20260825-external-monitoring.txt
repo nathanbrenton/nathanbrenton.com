@@ -661,6 +661,7 @@ DESIGN DECISIONS
            info@nathanbrenton.com
            postmaster@nathanbrenton.com
            nathan@nathanbrenton.com
+           admin@nathanbrenton.com   (added 2026-11-22: business Google account login)
            info@hiplingo.com
            postmaster@hiplingo.com
            nathan@hiplingo.com
@@ -1062,6 +1063,8 @@ Current accepted business/public aliases:
     info@nathanbrenton.com
     postmaster@nathanbrenton.com
     nathan@nathanbrenton.com
+    admin@nathanbrenton.com   (added 2026-11-22: business Google account login;
+                               business map, not the ops map)
 
     info@hiplingo.com
     postmaster@hiplingo.com
@@ -1074,6 +1077,7 @@ Current rules are equivalent to:
 
     /^(info|postmaster)@(nathanbrenton\.com|hiplingo\.com)$/    <CONTACT_FORWARD_TARGET>
     /^nathan@nathanbrenton\.com$/                               <CONTACT_FORWARD_TARGET>
+    /^admin@nathanbrenton\.com$/                                <CONTACT_FORWARD_TARGET>
     /^(nathan|licensing|press|accounting)@hiplingo\.com$/       <CONTACT_FORWARD_TARGET>
 
 admin@hiplingo.com intentionally does NOT match this business map. Unknown
@@ -1114,6 +1118,7 @@ forwarding destinations.
       info@nathanbrenton.com \
       postmaster@nathanbrenton.com \
       nathan@nathanbrenton.com \
+      admin@nathanbrenton.com \
       info@hiplingo.com \
       postmaster@hiplingo.com \
       nathan@hiplingo.com \
