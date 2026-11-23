@@ -64,6 +64,11 @@ Website-specific immutable-release deployment / rollback workflow.
 Quote form service (Postmark) and the nginx update: security headers,
 www/HTTP redirects, real 404s, caching, and the `/api/quote-request` proxy.
 
+### `nathanbrenton.com-email-dns.md`
+
+SPF, DKIM and DMARC for nathanbrenton.com (DNS at Squarespace): who sends as
+the domain, the records, and the schedule for tightening DMARC.
+
 ## Ownership rule
 
 Shared host infrastructure belongs here even though the same server also
