@@ -252,6 +252,18 @@ main.home { margin-top: 0; padding-top: 12px; }
 .detail-list dt { color: var(--text-muted); }
 .detail-list dd { margin: 0; }
 
+/* ---------- Privacy and terms ---------- */
+.updated { margin: 10px 0 0; color: var(--text-muted); font-size: .9rem; }
+.legal .section-card h2 { margin-bottom: 10px; font-size: 1.25rem; }
+.legal .section-card p, .legal-list { max-width: 68ch; }
+.legal .section-card p:last-child { margin-bottom: 0; }
+.legal-list { margin: 0 0 1em; padding-left: 22px; }
+.legal-list:last-child { margin-bottom: 0; }
+.legal-list li + li { margin-top: 8px; }
+.legal-list li::marker { color: var(--gold); }
+.form-privacy { margin: 0 0 16px; }
+.form-privacy a { color: var(--cyan); }
+
 /* ---------- Footer ---------- */
 .site-footer {
   display: grid;
@@ -265,6 +277,8 @@ main.home { margin-top: 0; padding-top: 12px; }
 .site-footer p { margin: 0; }
 .footer-nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; }
 .footer-nav a { display: inline-block; padding: 8px 0; }
+.footer-legal a { display: inline-block; padding: 8px 2px; color: inherit; }
+.footer-legal a[aria-current="page"] { color: var(--gold); }
 
 .field-error {
   margin: 6px 0 0;

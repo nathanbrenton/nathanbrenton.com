@@ -252,6 +252,8 @@ for file in \
   work/index.html \
   about/index.html \
   contact/index.html \
+  privacy/index.html \
+  terms/index.html \
   resume/Nathan-Brenton-Resume.pdf
 do
   ssh -n "$REMOTE" \
