@@ -1,0 +1,14 @@
+# nathanbrenton.com quote form service health (Monit).
+# Install as /etc/monit/conf.d/nathanbrenton-form (root:root 600); see docs/nathanbrenton.com-watch.md.
+# Alert only: systemd already restarts the service on failure (Restart=on-failure).
+# Keep backups of this file OUTSIDE /etc/monit/conf.d (everything there is loaded).
+
+check host nathanbrenton-form with address 127.0.0.1
+  if failed
+     port 18770
+     protocol http
+     request "/api/health"
+     content = "ok"
+     with timeout 5 seconds
+     for 2 cycles
+  then alert
