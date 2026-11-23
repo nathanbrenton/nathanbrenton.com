@@ -1,0 +1,15 @@
+[Unit]
+Description=web-prod-01 nightly restic backup to S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/web-prod-01-backup
+Nice=10
+IOSchedulingClass=idle
+# ~1 GiB server: keep restic well clear of the websites.
+# GOGC=20 makes restic (Go) free memory sooner; the first run peaked at the 300M cap without it.
+Environment=GOGC=20
+MemoryMax=300M
+TimeoutStartSec=3h

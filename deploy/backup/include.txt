@@ -1,0 +1,11 @@
+# What web-prod-01's nightly restic backup copies to S3 (one path per line).
+/etc
+/opt
+/root
+/home
+/srv
+/usr/local
+/var/www
+/var/spool/cron
+/var/lib/grafana
+/var/backups/web-prod-01-meta

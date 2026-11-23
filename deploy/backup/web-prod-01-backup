@@ -1,0 +1,38 @@
+#!/bin/bash
+# Nightly restic backup of web-prod-01 to S3. Installed as /usr/local/sbin/web-prod-01-backup.
+# Source of truth: nathanbrenton.com repo, deploy/backup/. Runbook: docs/nathanbrenton.com-watch.md.
+set -euo pipefail
+umask 077
+
+CONF=/etc/restic
+set -a; . "$CONF/env"; set +a        # RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE, AWS_* (root-only file)
+
+# 1. Small facts that make a rebuild easier: installed packages, enabled services, timers.
+META=/var/backups/web-prod-01-meta
+install -d -m 700 "$META"
+dpkg --get-selections > "$META/dpkg-selections.txt"
+systemctl list-unit-files --state=enabled --no-pager > "$META/enabled-units.txt"
+systemctl list-timers --all --no-pager > "$META/timers.txt"
+
+# 2. Back up. Paths that don't exist are skipped rather than failing the run.
+paths=()
+while IFS= read -r p; do
+  [[ -z "$p" || "$p" == \#* ]] && continue
+  [[ -e "$p" ]] && paths+=("$p")
+done < "$CONF/include.txt"
+
+restic backup --one-file-system --tag nightly --host web-prod-01 \
+  --exclude-file "$CONF/exclude.txt" --exclude-caches "${paths[@]}"
+
+# 3. Keep 7 daily, 4 weekly, 6 monthly snapshots. Prune and check once a week (Sunday).
+restic forget --host web-prod-01 --keep-daily 7 --keep-weekly 4 --keep-monthly 6
+if [[ "$(date -u +%u)" == 7 ]]; then
+  restic prune
+  restic check --read-data-subset=5%
+fi
+
+# 4. Tell Better Stack this night's backup succeeded (no URL yet = skip).
+if [[ -s "$CONF/heartbeat-url" ]]; then
+  curl -fsS -m 15 --retry 3 -o /dev/null "$(cat "$CONF/heartbeat-url")" || echo "heartbeat ping failed (backup itself succeeded)"
+fi
+echo "backup finished OK"

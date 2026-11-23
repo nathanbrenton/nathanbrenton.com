@@ -1,0 +1,43 @@
+#!/bin/bash
+# Run with sudo from the staging folder: sudo bash install.sh
+# Installs the backup script, timer and lists; creates the restic password; asks for the AWS key once;
+# initialises the repository if needed. Never prints secrets.
+set -euo pipefail
+umask 077
+cd "$(dirname "$0")"
+CONF=/etc/restic
+REPO="s3:s3.us-east-2.amazonaws.com/nathanbrenton-web-prod-01-backup/restic"
+
+install -d -o root -g root -m 700 "$CONF"
+install -o root -g root -m 600 include.txt exclude.txt "$CONF/"
+install -o root -g root -m 700 web-prod-01-backup /usr/local/sbin/web-prod-01-backup
+install -o root -g root -m 644 web-prod-01-backup.service web-prod-01-backup.timer /etc/systemd/system/
+
+if [[ ! -s "$CONF/password" ]]; then
+  openssl rand -base64 32 > "$CONF/password"
+  echo "created new restic password"
+fi
+chmod 600 "$CONF/password"
+
+if ! grep -q '^AWS_SECRET_ACCESS_KEY=.\+' "$CONF/env" 2>/dev/null; then
+  read -rp  "AWS access key ID for web-prod-01-restic: " KEY_ID
+  read -rsp "AWS secret access key (hidden): " SECRET; echo
+  [[ -n "$KEY_ID" && -n "$SECRET" ]] || { echo "empty key, nothing written"; exit 1; }
+  printf 'RESTIC_REPOSITORY=%s\nRESTIC_PASSWORD_FILE=%s/password\nAWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nAWS_DEFAULT_REGION=us-east-2\n' \
+    "$REPO" "$CONF" "$KEY_ID" "$SECRET" > "$CONF/env"
+  unset SECRET
+  echo "saved AWS key to $CONF/env"
+fi
+chmod 600 "$CONF/env"
+
+set -a; . "$CONF/env"; set +a
+if restic cat config >/dev/null 2>&1; then
+  echo "repository: already initialised"
+else
+  restic init >/dev/null && echo "repository: initialised at $REPO"
+fi
+
+systemctl daemon-reload
+systemctl enable web-prod-01-backup.timer >/dev/null
+echo "timer: enabled (not started yet)"
+echo "INSTALL OK"

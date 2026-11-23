@@ -1,0 +1,14 @@
+# Never back up caches or data that can be re-downloaded or rebuilt.
+/root/.cache
+/home/*/.cache
+/home/*/.npm
+*.swp
+# Prometheus and node_exporter binaries: reinstalled from official checksummed downloads (runbook).
+# Their configuration lives in /etc and is backed up.
+/opt/prometheus
+/opt/node_exporter
+# Grafana: keep grafana.db, installed plugins and search index; skip what the package ships or regenerates.
+/var/lib/grafana/plugins-bundled
+/var/lib/grafana/csv
+/var/lib/grafana/pdf
+/var/lib/grafana/png

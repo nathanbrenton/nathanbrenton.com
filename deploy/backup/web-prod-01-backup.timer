@@ -1,0 +1,10 @@
+[Unit]
+Description=Run web-prod-01 backup nightly (about 02:30 Pacific)
+
+[Timer]
+OnCalendar=*-*-* 10:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
