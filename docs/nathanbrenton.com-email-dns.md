@@ -25,6 +25,16 @@ If that changes, add the provider to SPF and DKIM **before** tightening DMARC.
 
 Already present before: Postmark DKIM and `pm-bounces` CNAME, `ops` SPF + DKIM + `_dmarc.ops`, `srs` SPF + MX.
 
+Added 2026-11-24 for hiplingo.com, whose DMARC reports also go to admin@nathanbrenton.com:
+
+| Host | Type | Value |
+|---|---|---|
+| `hiplingo.com._report._dmarc` | TXT | `v=DMARC1` |
+
+This tells report senders that nathanbrenton.com accepts reports for hiplingo.com; without it some (Google included)
+drop them. Remove it if hiplingo.com's `rua` ever stops pointing here. Each new domain reporting to admin@ needs its own
+`<domain>._report._dmarc` record.
+
 ## Tightening schedule
 
 DMARC aggregate reports arrive at admin@nathanbrenton.com (forwarded by web-prod-01; Postmark is not involved).
