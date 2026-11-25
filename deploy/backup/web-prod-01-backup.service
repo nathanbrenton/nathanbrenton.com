@@ -12,4 +12,8 @@ IOSchedulingClass=idle
 # GOGC=20 makes restic (Go) free memory sooner; the first run peaked at the 300M cap without it.
 Environment=GOGC=20
 MemoryMax=300M
+# systemd sets no $HOME, so give restic a cache (without it every run rereads the index from S3).
+CacheDirectory=restic
+CacheDirectoryMode=0700
+Environment=RESTIC_CACHE_DIR=/var/cache/restic
 TimeoutStartSec=3h

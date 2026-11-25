@@ -72,8 +72,9 @@ the domain, the records, and the schedule for tightening DMARC.
 ### `nathanbrenton.com-watch.md`
 
 The Watch service ("Monitoring and Backups"): Better Stack monitors and heartbeat,
-Monit form check, nightly restic backups of web-prod-01 to S3, restores, and the
-fresh-install order used as the template for clients.
+Monit form check, nightly restic backups of web-prod-01 to S3 (plus a separate
+Hiplingo-only backup to its own bucket), restores, and the fresh-install order used
+as the template for clients.
 
 ## Ownership rule
 

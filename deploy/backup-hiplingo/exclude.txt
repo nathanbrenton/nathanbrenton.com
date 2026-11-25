@@ -1,0 +1,3 @@
+# Never back up caches or editor leftovers.
+*.swp
+.cache

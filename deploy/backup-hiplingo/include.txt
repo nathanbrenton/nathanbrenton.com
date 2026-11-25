@@ -1,0 +1,11 @@
+# What the Hiplingo nightly restic backup copies to S3 (one path or glob per line).
+# The whole-server job (deploy/backup/) still covers all of this too; this copy keeps Hiplingo separable.
+/var/www/hiplingo.com
+/etc/nginx/sites-available/hiplingo*
+/etc/letsencrypt/live/hiplingo.com
+/etc/letsencrypt/archive/hiplingo.com
+/etc/letsencrypt/renewal/hiplingo.com.conf
+/etc/postfix/contact-forwarding.regexp
+/etc/postfix/admin-forwarding.regexp
+/home/deploy-hiplingo-app/.ssh
+/home/deploy-hiplingo-media/.ssh

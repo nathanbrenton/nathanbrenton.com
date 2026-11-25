@@ -1,0 +1,40 @@
+#!/bin/bash
+# Nightly restic backup of Hiplingo's server content to its own S3 bucket. Installed as /usr/local/sbin/hiplingo-backup.
+# Source of truth: nathanbrenton.com repo, deploy/backup-hiplingo/. Runbook: docs/nathanbrenton.com-watch.md.
+set -euo pipefail
+umask 077
+
+CONF=/etc/restic-hiplingo
+set -a; . "$CONF/env"; set +a        # RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE, AWS_* (root-only file)
+
+# 1. Don't run two restic jobs at once on a 1 GB server: wait (up to 2 h) for the whole-server backup.
+for _ in $(seq 120); do
+  systemctl is-active --quiet web-prod-01-backup.service || break
+  sleep 60
+done
+
+# 2. Back up. Lines may be globs; paths that don't exist are skipped rather than failing the run.
+shopt -s nullglob
+paths=()
+while IFS= read -r line; do
+  [[ -z "$line" || "$line" == \#* ]] && continue
+  for p in $line; do [[ -e "$p" ]] && paths+=("$p"); done
+done < "$CONF/include.txt"
+shopt -u nullglob
+(( ${#paths[@]} )) || { echo "nothing to back up: check $CONF/include.txt"; exit 1; }
+
+restic backup --one-file-system --tag nightly --host web-prod-01 \
+  --exclude-file "$CONF/exclude.txt" --exclude-caches "${paths[@]}"
+
+# 3. Keep 7 daily, 4 weekly, 6 monthly snapshots. Prune and check once a week (Sunday).
+restic forget --host web-prod-01 --keep-daily 7 --keep-weekly 4 --keep-monthly 6
+if [[ "$(date -u +%u)" == 7 ]]; then
+  restic prune
+  restic check --read-data-subset=5%
+fi
+
+# 4. Tell Better Stack this night's backup succeeded (no URL yet = skip).
+if [[ -s "$CONF/heartbeat-url" ]]; then
+  curl -fsS -m 15 --retry 3 -o /dev/null "$(cat "$CONF/heartbeat-url")" || echo "heartbeat ping failed (backup itself succeeded)"
+fi
+echo "backup finished OK"

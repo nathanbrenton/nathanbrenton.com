@@ -12,6 +12,14 @@ Clean, known-good walkthrough for rebuilding and validating the production
 web, Hiplingo deployment boundary, mail, watchdog monitoring, and historical
 observability stack on web-prod-01.
 
+BACKUPS (added 2026-11-24): the nightly restic backups are NOT in this
+runbook. They live in nathanbrenton.com-watch.md and deploy/backup/ +
+deploy/backup-hiplingo/. A rebuild must reinstall BOTH jobs from those
+folders (whole-server -> nathanbrenton-web-prod-01-backup, Hiplingo ->
+hiplingo-record-label-backup). The repo units already carry the restic cache
+setting (CacheDirectory + RESTIC_CACHE_DIR); keep it. To restore from a lost
+server, start with the "Server lost" steps in that doc.
+
 The 2026-08-24 revision preserves the previously validated mail/Monit/media
 architecture and adds the complete node_exporter + Prometheus + Grafana +
 Blackbox Exporter v1 build, dashboard specification, security boundaries,

@@ -1,0 +1,18 @@
+[Unit]
+Description=Hiplingo nightly restic backup to S3 (hiplingo-record-label-backup)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hiplingo-backup
+Nice=10
+IOSchedulingClass=idle
+# Same limits as web-prod-01-backup; the script also waits if that job is still running.
+Environment=GOGC=20
+MemoryMax=300M
+# systemd sets no $HOME, so give restic a cache (without it every run rereads the index from S3).
+CacheDirectory=restic-hiplingo
+CacheDirectoryMode=0700
+Environment=RESTIC_CACHE_DIR=/var/cache/restic-hiplingo
+TimeoutStartSec=3h
