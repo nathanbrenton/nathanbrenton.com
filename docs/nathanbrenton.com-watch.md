@@ -14,6 +14,7 @@ Set up and tested 2026-11-23. Everything except S3 is free; S3 costs cents a mon
 | On the server | certbot.timer | renews certificates twice a day | — |
 | Mail | DMARC aggregate reports | who sends as nathanbrenton.com | admin@nathanbrenton.com ([email DNS](nathanbrenton.com-email-dns.md)) |
 | Backups | Better Stack heartbeat `web-prod-01 nightly backup` | a successful backup pinged in the last day (+6 h grace) | email |
+| Backups | Better Stack heartbeat `hiplingo nightly backup` | the Hiplingo-only backup pinged in the last day (+6 h grace) | email |
 
 Better Stack account: the one signed in with nathanbrenton@proton.me (the D'Acqua Dolce team is a different login; don't mix them).
 Free-plan limits: SSL-expiry and domain-expiry checks in Better Stack need a paid plan, so certificate expiry is covered by
@@ -57,7 +58,11 @@ web-prod-01. The whole-server backup above still includes it (rebuilds need only
 | Size | about 700 MB read, 334 MB stored (first snapshot `85798aba`, 2026-11-24) |
 | Memory | same limits and cache setting as the server job (`/var/cache/restic-hiplingo`); first run peaked at the 300M cap |
 
-Restore: as below, but load `/etc/restic-hiplingo/env` instead of `/etc/restic/env`.
+Restore: as below, but load `/etc/restic-hiplingo/env` instead of `/etc/restic/env` (and set
+`RESTIC_CACHE_DIR=/var/cache/restic-hiplingo`).
+
+**Tested 2026-11-24:** full restore of the latest snapshot to `/root/restore-hiplingo`; `/var/www/hiplingo.com`, the nginx
+site, the certificate archive, the contact map and the app deploy key matched live (`diff -r`). Heartbeat wired the same night.
 
 ### Secrets and where they live
 
